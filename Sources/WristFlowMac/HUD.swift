@@ -44,10 +44,8 @@ final class HUD {
         let pointer = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
         if let visible = screen?.visibleFrame {
-            panel.setFrameOrigin(CGPoint(
-                x: visible.midX - content.frame.width / 2,
-                y: visible.minY + visible.height * 0.14
-            ))
+            // Just above the Dock, out of the way of what the user is looking at.
+            panel.setFrameOrigin(CGPoint(x: visible.midX - content.frame.width / 2, y: visible.minY + 24))
         }
 
         panel.alphaValue = 1
@@ -87,12 +85,12 @@ private struct HUDView: View {
     let text: String
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text(glyph).font(.system(size: 26, weight: .semibold))
-            Text(text).font(.system(size: 15, weight: .medium))
+        HStack(spacing: 8) {
+            Text(glyph).font(.system(size: 18, weight: .semibold))
+            Text(text).font(.system(size: 13, weight: .medium))
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
         .background(.regularMaterial, in: Capsule())
         .fixedSize()
     }

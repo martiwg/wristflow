@@ -24,8 +24,9 @@ one person (see `Fixtures/`); the OK sign and gaze are still set on synthetic da
 | Swipe up | With your hand open, flick it upwards from the wrist | Show all windows |
 
 A pose counts only when held still for a moment (0.4 s by default), and a swipe only when it
-is a quick flick, so ordinary hand movement does not fire anything. The slower way back after
-a swipe is ignored, so you can swipe several times in a row. Poses are read from a hand held
+is a quick flick, so ordinary hand movement does not fire anything. After a swipe, the hand
+going back the other way is not a swipe, whether it goes at once or a moment later, so you
+can swipe several times in a row. Poses are read from a hand held
 out towards the camera; a hand back by your head (biting a nail, chin on the hand, scratching)
 is not read as a pose. Every gesture can be bound to any action, including a shortcut you
 record, in Settings.

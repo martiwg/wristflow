@@ -40,8 +40,10 @@ Foundation only. It never sees an image: its input is landmark frames, its outpu
    when it is held still for the hold time. It cannot fire again until the hand changes shape or leaves. Palm and back are
    told apart by which way round the knuckles run, given which hand it is.
 3. A swipe is a flick of the open hand: the fingertips travel far in about a tenth of a
-   second while the wrist stays roughly in place. Speed is what tells it from the slower way
-   back, which is ignored, and the pivot is what tells it from a hand being carried somewhere.
+   second while the wrist stays roughly in place. The pivot is what tells it from a hand being
+   carried somewhere. After a swipe, a flick the opposite way is the hand going back and is
+   ignored, until the fingertips are back where they started or a few seconds have passed;
+   an unhurried way back is too slow to be a flick in the first place.
    A hand that has just come into view, and diagonal or downward movements, fire nothing.
 4. A swipe uses up the open hand for that appearance, so the hand that swiped does not also
    count as a palm or a back being shown.

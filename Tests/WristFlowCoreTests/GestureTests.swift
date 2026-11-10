@@ -384,9 +384,9 @@ private let frameRates = [10.0, 30.0]
     // MARK: Swipes
 
     @Test(arguments: [
-        (Trigger.swipeRight, -30.0, 45.0),
-        (Trigger.swipeLeft, 30.0, -45.0),
-        (Trigger.swipeUp, 100.0, 20.0),
+        (Trigger.swipeRight, -40.0, 50.0),
+        (Trigger.swipeLeft, 40.0, -50.0),
+        (Trigger.swipeUp, 110.0, 15.0),
     ], frameRates)
     func flickIsASwipe(expected: (trigger: Trigger, from: Double, to: Double), fps: Double) {
         var session = Session(fps: fps)
@@ -399,15 +399,15 @@ private let frameRates = [10.0, 30.0]
 
     @Test func flickIsReadWhileTheHandIsBlurred() {
         var session = Session()
-        session.lean(-30, for: 0.3)
+        session.lean(-40, for: 0.3)
         // The fastest frame of a flick smears: the detector is unsure of the whole hand there.
         var smeared = SyntheticHand.halfClosed
         smeared.confidence = 0.4
         session.run(0.1) { elapsed in
             let shape = elapsed > 0.03 && elapsed < 0.06 ? smeared : SyntheticHand.openPalm
-            return [leaning(-30 + 75 * elapsed / 0.1, shape: shape)]
+            return [leaning(-40 + 90 * elapsed / 0.1, shape: shape)]
         }
-        session.lean(45, for: 0.2)
+        session.lean(50, for: 0.2)
         session.nothing(for: 0.6)
         #expect(session.triggers == [.swipeRight])
     }
@@ -428,11 +428,11 @@ private let frameRates = [10.0, 30.0]
     @Test(arguments: [0.1, 0.25], frameRates)
     func theWayBackIsNotASwipe(returnTime: Double, fps: Double) {
         var session = Session(fps: fps)
-        session.lean(-30, for: 0.3)
-        session.flick(from: -30, to: 45)
-        session.lean(45, for: 0.1)
-        session.flick(from: 45, to: -30, over: returnTime)
-        session.lean(-30, for: 0.2)
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50)
+        session.lean(50, for: 0.1)
+        session.flick(from: 50, to: -40, over: returnTime)
+        session.lean(-40, for: 0.2)
         session.nothing(for: 0.6)
         #expect(session.triggers == [.swipeRight])
     }
@@ -440,31 +440,70 @@ private let frameRates = [10.0, 30.0]
     @Test(arguments: frameRates)
     func flicksInARowEachCount(fps: Double) {
         var session = Session(fps: fps)
-        session.lean(30, for: 0.3)
+        session.lean(40, for: 0.3)
         for _ in 0..<4 {
-            session.flick(from: 30, to: -45)
-            session.flick(from: -45, to: 30, over: 0.2)
-            session.lean(30, for: 0.2)
+            session.flick(from: 40, to: -50)
+            session.flick(from: -50, to: 40, over: 0.2)
+            session.lean(40, for: 0.2)
         }
         session.nothing(for: 0.6)
         #expect(session.triggers == [.swipeLeft, .swipeLeft, .swipeLeft, .swipeLeft])
     }
 
+    @Test(arguments: [0.6, 1.5, 2.5])
+    func theWayBackIsNotASwipeHoweverLateItComes(pause: Double) {
+        var session = Session()
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50)
+        // Watching what the swipe did before taking the hand back, just as briskly.
+        session.lean(50, for: pause)
+        session.flick(from: 50, to: -40)
+        session.lean(-40, for: 0.3)
+        #expect(session.triggers == [.swipeRight])
+    }
+
     @Test func aSwipeTheOtherWayCountsOnceTheHandHasComeBack() {
         var session = Session()
-        session.lean(-30, for: 0.3)
-        session.flick(from: -30, to: 45)
-        session.lean(45, for: 0.6)
-        session.flick(from: 45, to: -30)
-        session.lean(-30, for: 0.2)
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50)
+        session.lean(50, for: 0.3)
+        session.flick(from: 50, to: -40)
+        session.lean(-40, for: 0.4)
+        // Back where it started; winding up and flicking the other way is a new swipe.
+        session.flick(from: -40, to: 50, over: 0.5)
+        session.lean(50, for: 0.1)
+        session.flick(from: 50, to: -40)
+        session.lean(-40, for: 0.2)
+        #expect(session.triggers == [.swipeRight, .swipeLeft])
+    }
+
+    @Test func aSwipeTheOtherWayCountsAfterTheHandWentBackSlowly() {
+        var session = Session()
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50)
+        session.flick(from: 50, to: -40, over: 0.6)
+        session.lean(-40, for: 0.4)
+        session.flick(from: -40, to: 50, over: 0.5)
+        session.flick(from: 50, to: -40)
+        session.lean(-40, for: 0.2)
+        #expect(session.triggers == [.swipeRight, .swipeLeft])
+    }
+
+    @Test func aHandLeftWhereTheSwipeEndedCanSwipeBackEventually() {
+        var session = Session()
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50)
+        session.lean(50, for: 3.5, shape: .halfClosed)
+        session.flick(from: 50, to: -40)
+        session.lean(-40, for: 0.2)
         #expect(session.triggers == [.swipeRight, .swipeLeft])
     }
 
     @Test func slowTurnOfTheHandIsNotASwipe() {
         var session = Session()
-        session.lean(-30, for: 0.3)
-        session.flick(from: -30, to: 45, over: 0.4)
-        session.lean(45, for: 0.2)
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50, over: 0.4)
+        session.lean(50, for: 0.2)
         session.nothing(for: 0.6)
         #expect(session.triggers.isEmpty)
     }
@@ -490,9 +529,9 @@ private let frameRates = [10.0, 30.0]
 
     @Test func handThatHasJustAppearedDoesNotSwipe() {
         var session = Session()
-        session.lean(-30, for: 0.1)
-        session.flick(from: -30, to: 45)
-        session.lean(45, for: 0.2)
+        session.lean(-40, for: 0.1)
+        session.flick(from: -40, to: 50)
+        session.lean(50, for: 0.2)
         session.nothing(for: 0.6)
         #expect(session.triggers.isEmpty)
     }
@@ -526,27 +565,27 @@ private let frameRates = [10.0, 30.0]
 
     @Test func fistDoesNotSwipe() {
         var session = Session()
-        session.lean(-30, for: 0.3, shape: .fist)
-        session.flick(from: -30, to: 45, shape: .fist)
-        session.lean(45, for: 0.2, shape: .fist)
+        session.lean(-40, for: 0.3, shape: .fist)
+        session.flick(from: -40, to: 50, shape: .fist)
+        session.lean(50, for: 0.2, shape: .fist)
         session.nothing(for: 0.6)
         #expect(session.triggers.isEmpty)
     }
 
     @Test func palmDoesNotFireAfterASwipe() {
         var session = Session()
-        session.lean(-30, for: 0.3)
-        session.flick(from: -30, to: 45)
-        session.lean(45, for: 2)
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50)
+        session.lean(50, for: 2)
         #expect(session.triggers == [.swipeRight])
         #expect(session.engine.state.holdProgress == 0)
     }
 
     @Test func palmFiresAgainOnceTheHandHasLeftAfterASwipe() {
         var session = Session()
-        session.lean(-30, for: 0.3)
-        session.flick(from: -30, to: 45)
-        session.lean(45, for: 0.1)
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50)
+        session.lean(50, for: 0.1)
         session.nothing(for: 0.6)
         session.hold(.openPalm, for: 0.6)
         #expect(session.triggers == [.swipeRight, .palm])
@@ -554,9 +593,9 @@ private let frameRates = [10.0, 30.0]
 
     @Test func anotherPoseAfterASwipeFreesThePalm() {
         var session = Session()
-        session.lean(-30, for: 0.3)
-        session.flick(from: -30, to: 45)
-        session.lean(45, for: 0.1)
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50)
+        session.lean(50, for: 0.1)
         session.hold(.fist, for: 0.6)
         session.hold(.openPalm, for: 0.6)
         #expect(session.triggers == [.swipeRight, .fist, .palm])
@@ -564,16 +603,16 @@ private let frameRates = [10.0, 30.0]
 
     @Test func noSwipeOnceThePalmHoldHasFired() {
         var session = Session()
-        session.lean(-30, for: 0.6)
-        session.flick(from: -30, to: 45)
-        session.flick(from: 45, to: -30, over: 0.2)
-        session.lean(-30, for: 0.6)
+        session.lean(-40, for: 0.6)
+        session.flick(from: -40, to: 50)
+        session.flick(from: 50, to: -40, over: 0.2)
+        session.lean(-40, for: 0.6)
         #expect(session.triggers == [.palm])
 
         session.nothing(for: 0.6)
-        session.lean(-30, for: 0.3)
-        session.flick(from: -30, to: 45)
-        session.lean(45, for: 0.1)
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50)
+        session.lean(50, for: 0.1)
         #expect(session.triggers == [.palm, .swipeRight])
     }
 
@@ -631,10 +670,10 @@ private let frameRates = [10.0, 30.0]
 
     @Test func backOfTheHandDoesNotFireAfterASwipe() {
         var session = Session()
-        session.lean(-30, for: 0.3)
-        session.flick(from: -30, to: 45)
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50)
         // A flick often leaves the hand turned over.
-        session.lean(45, for: 2, shape: .backOfHand)
+        session.lean(50, for: 2, shape: .backOfHand)
         #expect(session.triggers == [.swipeRight])
     }
 
@@ -699,9 +738,9 @@ private let frameRates = [10.0, 30.0]
     @Test func swipeFromAHandBackByTheHeadStillCounts() {
         var session = Session()
         session.engine.ingest(Self.face(handLooks: 0.8))
-        session.lean(-30, for: 0.3)
-        session.flick(from: -30, to: 45)
-        session.lean(45, for: 0.2)
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50)
+        session.lean(50, for: 0.2)
         #expect(session.triggers == [.swipeRight])
     }
 
@@ -717,10 +756,10 @@ private let frameRates = [10.0, 30.0]
 
     @Test func fourFingersDoNotFireAfterASwipe() {
         var session = Session()
-        session.lean(-30, for: 0.3)
-        session.flick(from: -30, to: 45)
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50)
         // The thumb often folds in during a flick, leaving four fingers showing.
-        session.lean(45, for: 2, shape: .fourFingers)
+        session.lean(50, for: 2, shape: .fourFingers)
         #expect(session.triggers == [.swipeRight])
     }
 
