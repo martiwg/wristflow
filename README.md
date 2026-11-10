@@ -7,8 +7,9 @@ WristFlow lives in the menu bar. macOS first; the gesture and gaze logic is kept
 Apple frameworks so a Windows version can be built on the same core
 (see [docs/WINDOWS.md](docs/WINDOWS.md)).
 
-**Status:** early. Everything about hands except the OK sign is tuned on real recordings of
-one person (see `Fixtures/`); the OK sign and gaze are still set on synthetic data.
+**Status:** early. The built-in hand gestures except the OK sign are tuned on real recordings
+of one person (see `Fixtures/`), and a calibration fits them to anyone else. The OK sign, gaze,
+two-hand combinations and recorded movements are still set on synthetic data.
 
 ## Gestures
 
@@ -39,6 +40,30 @@ what each does. While both hands are up only the combination fires. A pose that 
 combination and also does something alone takes a moment longer to fire alone, which gives
 the other hand time to come up.
 
+### Your own gestures
+
+In Settings, under **My Gestures**, **New Gesture…** records a gesture of your own in about a
+minute:
+
+- **A hand shape** you hold still, like the built-in poses: horns, a pinky up, an L, thumbs
+  down. You show it three times with each hand (either hand can be skipped).
+- **A movement** your hand draws between two moments of holding still: a circle, a zigzag, a
+  tick. You make it four times. The hand shape it starts from is part of the gesture, which
+  keeps everyday hand movement from setting it off. Movements are less reliable than shapes.
+
+Before saving, WristFlow says whether the new gesture could be mistaken for another one and
+lets you try it for real. A recorded shape can be one hand of a combination.
+
+### Calibration
+
+The built-in gestures were tuned on one person's hands. **Calibrate…** (Settings,
+**Calibration**) asks you for each of them with each hand, for a hand resting against your
+face, and for a few swipes, and fits the thresholds to you. It shows how well each gesture is
+read before and after, changes nothing until you accept, and can be undone at any time.
+
+Everything you record belongs to your account on the Mac: it is stored in
+`~/Library/Application Support/WristFlow`, next to your settings, and never leaves it.
+
 ## Gaze focus
 
 With two or more displays, WristFlow can move the pointer and the active window to the display
@@ -67,8 +92,10 @@ again after every rebuild.
 
 ## Privacy
 
-Camera images are processed on your Mac, in memory, and dropped. Nothing is stored or sent.
-The camera is off while WristFlow is disabled and while the screen is locked or asleep.
+Camera images are processed on your Mac, in memory, and dropped. No image is stored and
+nothing is sent. Gestures you record and a calibration are stored on your Mac as joint
+positions, not pictures. The camera is off while WristFlow is disabled and while the screen
+is locked or asleep.
 
 ## Development
 
@@ -76,7 +103,10 @@ The camera is off while WristFlow is disabled and while the screen is locked or 
 - **Camera Preview…** in the menu shows the hand skeleton and what is being read.
 - `WristFlow --record-landmarks <file> [seconds]` records joint positions (not images) to a
   file; `WristFlow --replay <file>` runs a recording through the gesture engine and prints
-  what fires. Launch through `open build/WristFlow.app --args …` so the camera permission of
-  the app applies.
+  what fires (`--library <gestures.json>` adds recorded gestures, combinations and a
+  calibration). Launch through `open build/WristFlow.app --args …` so the camera permission
+  of the app applies.
 - `WristFlow --snapshot <folder>` renders the views to PNG files without turning the camera on.
+- `WRISTFLOW_HOME=<folder>` makes the app keep its files there instead of in Application
+  Support, for trying things without touching your own settings.
 - `WRISTFLOW_CORE_ONLY=1 swift test` builds and tests the portable core on its own.

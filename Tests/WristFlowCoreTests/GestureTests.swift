@@ -1044,3 +1044,173 @@ private func rightHand(_ shape: SyntheticHand) -> SyntheticHand {
         #expect((session.fired.first?.time ?? 0) <= 0.4 + 0.1)
     }
 }
+
+// MARK: - Recorded shapes
+
+@Suite struct RecordedShapeTests {
+    /// Index and little finger up: a shape no built-in pose covers.
+    private static let horns = SyntheticHand(curls: [.thumb: 1, .middle: 1, .ring: 1])
+
+    /// A library holding `horns`, recorded in three takes that differ a little, as real ones do.
+    private func library() throws -> GestureLibrary {
+        let takes: [[Hand]] = (0..<3).map { take in
+            (0..<10).map { frame in
+                var shape = Self.horns
+                shape.rotation = Double(take - 1) * 8
+                shape.scale = 0.14 + 0.01 * Double(take)
+                shape.jitter = 0.01
+                shape.seed = UInt64(take * 100 + frame + 1)
+                return shape.hand()
+            }
+        }
+        let template = try #require(ShapeTemplate(hands: takes))
+        var library = GestureLibrary()
+        library.customGestures = [CustomGesture(id: "horns", name: "Horns", shape: template)]
+        return library
+    }
+
+    @Test(arguments: [false, true])
+    func aRecordedShapeHeldStillFiresItsOwnTrigger(isLeft: Bool) throws {
+        var session = Session()
+        session.engine.library = try library()
+        var shape = Self.horns
+        shape.isLeft = isLeft
+        session.hold(shape, for: 1)
+        #expect(session.triggers == [.custom("horns")])
+        #expect(session.engine.state.pose == .custom("horns"))
+    }
+
+    @Test func builtInPosesAreReadAsBeforeNextToARecordedShape() throws {
+        for pose in Pose.builtIn {
+            var session = Session()
+            session.engine.library = try library()
+            session.hold(.shape(for: pose), for: 1)
+            #expect(session.triggers == [Trigger(pose: pose)])
+        }
+    }
+
+    @Test func aRecordedShapeCanBeHalfOfACombination() throws {
+        var session = Session()
+        var library = try library()
+        library.combinations = [Combination(id: "rock", left: .custom("horns"), right: .fist, eitherWay: false)]
+        session.engine.library = library
+        session.run(2) { _ in [leftHand(Self.horns), rightHand(.fist)] }
+        #expect(session.triggers == [.combination("rock")])
+    }
+
+    @Test func aShapeRecordedOverABuiltInPoseTakesItsPlace() throws {
+        // Two fingers, as recorded, taught as a gesture of the user's own.
+        let fixture = try Fixture(named: "finger-counts")
+        let shown = fixture.frames.compactMap { frame -> Hand? in
+            guard case .hands(let hands) = frame, (9.0...11.5).contains(hands.time) else { return nil }
+            return hands.hands.max { $0.palmSize < $1.palmSize }
+        }
+        let third = shown.count / 3
+        let template = try #require(ShapeTemplate(hands: [
+            Array(shown[..<third]), Array(shown[third..<(2 * third)]), Array(shown[(2 * third)...]),
+        ]))
+        var engine = GestureEngine()
+        engine.library.customGestures = [CustomGesture(id: "mine", name: "Mine", shape: template, alsoReadAs: .two)]
+
+        var fired: [Trigger] = []
+        for frame in fixture.frames {
+            switch frame {
+            case .face(let face): engine.ingest(face)
+            case .hands(let hands): if let trigger = engine.ingest(hands) { fired.append(trigger) }
+            }
+        }
+        // Only the two fingers change hands; every other pose in the recording reads as it did.
+        let expected = fixture.expected.triggers.map { $0 == .twoFingers ? Trigger.custom("mine") : $0 }
+        #expect(fired == expected)
+    }
+}
+
+// MARK: - Recorded movements
+
+@Suite struct RecordedMovementTests {
+    /// Where the palm centre is `progress` (0...1) of the way round a circle 3 palm sizes
+    /// across that starts and ends at `home`, going up and to the user's right first.
+    private static func circle(_ progress: Double, clockwise: Bool = true) -> Point2 {
+        let radius = 1.5 * palm
+        let angle = 2 * Double.pi * progress * (clockwise ? 1 : -1)
+        return Point2(x: home.x + radius * sin(angle), y: home.y + radius * (1 - cos(angle)))
+    }
+
+    /// Up, across and up again: nothing like a circle.
+    private static func zigzag(_ progress: Double) -> Point2 {
+        let corners = [home, away(2, 1), away(-2, 2), away(2, 3)]
+        let scaled = min(max(progress, 0), 1) * Double(corners.count - 1)
+        let index = min(Int(scaled), corners.count - 2)
+        return corners[index] + (corners[index + 1] - corners[index]) * (scaled - Double(index))
+    }
+
+    /// Rest, one movement along `path` lasting `duration` seconds, rest.
+    private static func play(
+        _ path: @escaping (Double) -> Point2, over duration: Double = 0.9, with shape: SyntheticHand = .pointing,
+        restingFirst rest: Double = 0.3, in session: inout Session
+    ) {
+        session.hold(shape, at: path(0), for: rest)
+        session.run(duration) { elapsed in [shape.at(path(elapsed / duration))] }
+        session.hold(shape, at: path(1), for: 0.8)
+    }
+
+    /// A library that knows the clockwise circle drawn with one finger, from four takes of it.
+    private func library() throws -> GestureLibrary {
+        var tracker = MovementTracker()
+        var takes: [MovementSegment] = []
+        var time = 0.0
+        for take in 0..<4 {
+            let duration = 0.8 + 0.1 * Double(take)
+            let frames = Int((0.3 + duration + 0.5) * 30)
+            for frame in 0..<frames {
+                let elapsed = Double(frame) / 30
+                let progress = min(max((elapsed - 0.3) / duration, 0), 1)
+                let segment = tracker.ingest(time: time, center: Self.circle(progress), palmSize: palm, pose: .one)
+                if let segment { takes.append(segment) }
+                time += 1.0 / 30
+            }
+        }
+        #expect(takes.count == 4)
+        let template = try #require(MovementTemplate(takes: takes))
+        #expect(template.startPose == Trigger.oneFinger.key)
+        var library = GestureLibrary()
+        library.customGestures = [CustomGesture(id: "circle", name: "Circle", movement: template)]
+        return library
+    }
+
+    @Test(arguments: frameRates)
+    func aRecordedMovementFiresOnceAsTheHandComesToRest(fps: Double) throws {
+        var session = Session(fps: fps)
+        session.engine.library = try library()
+        Self.play({ Self.circle($0) }, in: &session)
+        // The finger it was drawn with is still up afterwards, and is not a pose being shown.
+        #expect(session.triggers == [.custom("circle")])
+    }
+
+    @Test func anotherMovementOrTheWrongWayRoundFiresNothing() throws {
+        var session = Session()
+        session.engine.library = try library()
+        Self.play(Self.zigzag, in: &session)
+        session.nothing(for: 0.5)
+        Self.play({ Self.circle($0, clockwise: false) }, in: &session)
+        #expect(!session.triggers.contains(.custom("circle")))
+    }
+
+    @Test func theMovementCountsOnlyFromTheHandShapeItWasRecordedWith() throws {
+        var session = Session()
+        session.engine.library = try library()
+        Self.play({ Self.circle($0) }, with: .fist, in: &session)
+        #expect(!session.triggers.contains(.custom("circle")))
+    }
+
+    @Test func swipesAndPosesWorkAsBeforeNextToARecordedMovement() throws {
+        var session = Session()
+        session.engine.library = try library()
+        session.hold(.fist, for: 1)
+        session.nothing(for: 0.5)
+        session.lean(-40, for: 0.3)
+        session.flick(from: -40, to: 50)
+        session.lean(50, for: 0.3)
+        #expect(session.triggers == [.fist, .swipeRight])
+    }
+}

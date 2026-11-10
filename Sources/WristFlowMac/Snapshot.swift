@@ -18,6 +18,17 @@ enum Snapshot {
             write(SettingsView(model: model, initialTab: tab), named: "settings-\(tab.rawValue)", in: folder)
         }
         write(PreviewView(model: model), named: "preview", in: folder)
+
+        let naming = TrainingSession(flow: .newGesture, model: model, live: false)
+        write(TrainingView(session: naming, model: model, onClose: {}), named: "training-new-gesture", in: folder)
+        let showing = TrainingSession(flow: .newGesture, model: model, live: false)
+        showing.show(.shape(.right), hint: "Hold it there", takesDone: 1, progress: 0.6)
+        write(TrainingView(session: showing, model: model, onClose: {}), named: "training-shape", in: folder)
+        let fitting = TrainingSession(flow: .calibration, model: model, live: false)
+        write(TrainingView(session: fitting, model: model, onClose: {}), named: "training-calibration", in: folder)
+        let stepping = TrainingSession(flow: .calibration, model: model, live: false)
+        stepping.show(.calibrate(4), hint: "Show your right hand to the camera", takesDone: 0, progress: 0)
+        write(TrainingView(session: stepping, model: model, onClose: {}), named: "training-calibration-step", in: folder)
         NSApp.terminate(nil)
     }
 

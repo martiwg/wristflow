@@ -10,14 +10,16 @@ struct SettingsView: View {
     @State private var tab: Tab?
 
     enum Tab: String, CaseIterable, Identifiable {
-        case gestures, combinations, general
+        case gestures, myGestures, combinations, calibration, general
 
         var id: String { rawValue }
 
         var title: String {
             switch self {
             case .gestures: "Gestures"
+            case .myGestures: "My Gestures"
             case .combinations: "Combinations"
+            case .calibration: "Calibration"
             case .general: "General"
             }
         }
@@ -25,7 +27,9 @@ struct SettingsView: View {
         var symbol: String {
             switch self {
             case .gestures: "hand.raised"
+            case .myGestures: "hand.draw"
             case .combinations: "hands.clap"
+            case .calibration: "slider.horizontal.3"
             case .general: "gearshape"
             }
         }
@@ -46,7 +50,9 @@ struct SettingsView: View {
     private func content(of tab: Tab) -> some View {
         switch tab {
         case .gestures: GesturesTab(model: model)
+        case .myGestures: MyGesturesTab(model: model)
         case .combinations: CombinationsTab(model: model)
+        case .calibration: CalibrationTab(model: model)
         case .general: GeneralTab(model: model)
         }
     }

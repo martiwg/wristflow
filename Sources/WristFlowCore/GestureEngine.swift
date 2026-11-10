@@ -136,7 +136,25 @@ public struct GestureState: Equatable, Sendable {
 public struct GestureEngine: Sendable {
     public var config: GestureConfig
     /// What the user taught: recorded gestures, combinations and their calibration.
-    public var library = GestureLibrary()
+    public var library = GestureLibrary() {
+        didSet {
+            shapes = library.shapes
+            movements = library.movements
+            profile = library.profile
+            twins = [:]
+            for gesture in library.customGestures where gesture.shape != nil {
+                twins[gesture.id] = gesture.alsoReadAs.flatMap(Trigger.init(key:))?.builtInPose
+            }
+        }
+    }
+
+    /// The recorded shapes and thresholds of `library`, kept at hand because they are needed
+    /// on every frame.
+    private var shapes: [(id: String, template: ShapeTemplate)] = []
+    private var movements: [(id: String, template: MovementTemplate)] = []
+    private var profile = PoseProfile.factory
+    /// For each recorded shape that was recorded over a built-in pose, that pose.
+    private var twins: [String: Pose] = [:]
     public private(set) var state = GestureState()
 
     private var track: Track?
@@ -211,6 +229,10 @@ public struct GestureEngine: Sendable {
         }
         let swipe = followed.followSwipe(at: now, config: config)
         trigger = trigger ?? swipe
+        if swipe != nil { followed.swipedAt = now }
+        if let movement = followMovement(of: &followed, showing: reading, at: now), trigger == nil {
+            trigger = movement
+        }
 
         var progress = followed.holdProgress(at: now, holdTime: needed)
         if let pairing {
@@ -239,12 +261,27 @@ public struct GestureEngine: Sendable {
         // takes the shape of a fist or an open palm while doing it. Swipes are left alone:
         // nothing done there looks like a flick.
         followed.withdrawn = isWithdrawn(palmSize: followed.palmSize, was: followed.withdrawn, at: now)
-        let reading = followed.withdrawn ? nil : read(hand)
+        let reading = followed.withdrawn ? nil : read(hand, held: followed.hold?.pose, fired: followed.hold?.fired ?? false)
         let rested = followed.restDuration(radius: config.restRadius * followed.palmSize)
         followed.followPose(
             reading, trusted: reached(rested, config.restTime), at: now, elapsed: elapsed, config: config
         )
         return reading
+    }
+
+    /// The recorded movement the main hand has just finished, if it finished one. A movement
+    /// is what the hand does between two rests, so this fires as the hand comes to rest.
+    private func followMovement(of followed: inout Track, showing reading: Pose?, at now: Double) -> Trigger? {
+        guard !movements.isEmpty else { return nil }
+        let segment = followed.mover.ingest(
+            time: now, center: followed.center, palmSize: followed.palmSize, pose: reading
+        )
+        // A swipe carries the hand along too, and has already been counted as a swipe. A hand
+        // back by the head is scratching or adjusting something, not drawing.
+        guard let segment, followed.swipedAt < segment.start, !followed.withdrawn,
+              let id = MovementMatcher.match(segment, among: movements) else { return nil }
+        followed.movedAt = now
+        return .custom(id)
     }
 
     /// Keeps up with the hand that is not the main one, and returns the pose read on it.
@@ -309,10 +346,35 @@ public struct GestureEngine: Sendable {
         return was
     }
 
+    /// How much farther than its threshold a recorded shape may be and still count while it
+    /// is being held (ratio): leaving a pose takes more than entering it, so a hand at the
+    /// edge of a match does not flicker in and out.
+    private static let heldShapeSlack = 1.3
+
     /// The pose a hand shows: a shape the user recorded when it looks like one, otherwise
-    /// one of the built-in poses.
-    private func read(_ hand: Hand) -> Pose? {
-        PoseClassifier.classify(hand, profile: library.profile)
+    /// one of the built-in poses. `held` is the pose the hand has been holding and `fired`
+    /// whether that hold was used, which settle the frames that could be read either way.
+    private func read(_ hand: Hand, held: Pose?, fired: Bool) -> Pose? {
+        let builtIn = PoseClassifier.classify(hand, profile: profile)
+        guard !shapes.isEmpty else { return builtIn }
+        let example = ShapeExample(hand)
+        if let example, let id = ShapeMatcher.match(example, among: shapes) {
+            // A shape recorded over a built-in pose looks like that pose too. Once the pose
+            // has fired, the same showing of the hand must not go on to fire the shape.
+            if fired, let held, held == builtIn, twins[id] == held { return held }
+            return .custom(id)
+        }
+        // A recorded shape that is being held is not lost to a frame in which the detector
+        // could not see every joint, or in which the hand is a little off: unless the hand
+        // now clearly shows some other pose.
+        if case .custom(let id)? = held, let template = shapes.first(where: { $0.id == id })?.template,
+           builtIn == nil || builtIn == twins[id] {
+            guard let example else { return held }
+            if let distance = template.distance(to: example), distance <= template.threshold * Self.heldShapeSlack {
+                return held
+            }
+        }
+        return builtIn
     }
 
     private func isUsable(_ hand: Hand) -> Bool {
@@ -415,6 +477,15 @@ private struct Track: Sendable {
     var palmSpent = false
     /// The hand is back by the head; see `GestureEngine.isWithdrawn`.
     var withdrawn = false
+    /// Cuts the hand's motion into movements, to compare with the ones the user recorded.
+    var mover = MovementTracker()
+    /// When the hand last swiped.
+    var swipedAt = -Double.infinity
+    /// When the hand last finished a recorded movement.
+    var movedAt = -Double.infinity
+    /// Seconds around the end of a recorded movement within which a pose that starts to be
+    /// held is the hand coming to rest, not a pose being shown.
+    static let movementSettle = 0.3
 
     init(hand: Hand, time: Double) {
         center = hand.palmCenter
@@ -521,6 +592,13 @@ private struct Track: Sendable {
         guard var current = hold, !current.fired, reading == current.pose,
               !(current.pose.isOpenHand && palmSpent),
               reached(now - current.since, holdTime) else { return nil }
+        // A movement ends with the hand held still, in whatever shape it drew with. That
+        // stillness belongs to the movement.
+        if current.since <= movedAt + Self.movementSettle {
+            current.fired = true
+            hold = current
+            return nil
+        }
         current.fired = true
         hold = current
         // Deliberately showing another pose ends the swiping; the palm means palm again.

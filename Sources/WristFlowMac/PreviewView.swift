@@ -57,8 +57,12 @@ private enum PreviewLayout {
 
 // MARK: Video
 
-private struct VideoArea: View {
+/// The camera as in a mirror with the hand skeleton on top, or the reason there is no
+/// picture. The model publishes hands only while the preview window or a guided flow is open.
+struct VideoArea: View {
     let model: AppModel
+    /// A path to draw over the picture, in image heights: the movement a hand is making.
+    var trail: [Point2] = []
 
     var body: some View {
         // `captureSession` is not observable by itself. It only ever changes together with
@@ -70,6 +74,7 @@ private struct VideoArea: View {
                 Color.black
                 CameraPreview(session: session)
                 HandOverlay(model: model)
+                if trail.count > 1 { TrailOverlay(model: model, points: trail) }
             }
         } else {
             CameraPlaceholder(model: model)
@@ -188,7 +193,31 @@ private struct HandOverlay: View {
     }
 }
 
-private enum HandDrawing {
+/// Draws the path a hand has travelled over the camera picture.
+private struct TrailOverlay: View {
+    let model: AppModel
+    let points: [Point2]
+
+    var body: some View {
+        let aspect = PreviewLayout.cameraAspect(of: model.captureSession)
+        Canvas { context, size in
+            let video = PreviewLayout.fit(aspect: aspect, in: size)
+            var path = Path()
+            for (index, point) in points.enumerated() {
+                let location = CGPoint(
+                    x: video.minX + CGFloat(point.x) / aspect * video.width,
+                    y: video.minY + (1 - CGFloat(point.y)) * video.height
+                )
+                if index == 0 { path.move(to: location) } else { path.addLine(to: location) }
+            }
+            context.addFilter(.shadow(color: .black.opacity(0.6), radius: 2))
+            context.stroke(path, with: .color(.accentColor), style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+enum HandDrawing {
     /// Joints under this confidence (0...1) are drawn dimmed; the pose classifier does not
     /// believe them either.
     static let trustedConfidence: Float = 0.3

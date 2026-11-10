@@ -8,9 +8,13 @@ Nothing here exists yet. This is the map for whoever builds it.
 contains everything that decides what the user meant:
 
 - the landmark types every platform fills in (`Landmarks.swift`),
-- pose classification and the gesture engine,
+- pose classification and the gesture engine, including two-hand combinations,
+- recorded shapes and movements (`ShapeMatcher.swift`, `MovementMatcher.swift`),
+- the calibration maths and the capture state machine the guided flows run on
+  (`Calibration.swift`, `PoseCapture.swift`),
 - the gaze classifier and tracker,
-- triggers, actions, bindings and the configuration file format (`Bindings.swift`),
+- triggers, actions, bindings and the two file formats: settings (`Bindings.swift`) and what
+  the user taught (`GestureLibrary.swift`),
 - the recording format used by the fixtures in `Fixtures/`.
 
 ## What a Windows shell has to provide
@@ -23,7 +27,9 @@ Three protocols, declared in `Platform.swift`:
 | `ActionPerforming` | `CGEvent`, deep links | `SendInput`, protocol activation |
 | `DisplayFocusing` | `CGWarpMouseCursorPosition`, Accessibility API | `SetCursorPos`, `EnumWindows`, `SetForegroundWindow` |
 
-Plus the shell itself: tray icon, settings window, camera preview, start at sign-in.
+Plus the shell itself: tray icon, settings window, camera preview, the guided flows for
+recording a gesture and calibrating (the macOS ones are `Training*.swift`; their logic is in
+the core), start at sign-in.
 
 ### Landmarks
 
@@ -57,6 +63,8 @@ size with `FaceFrame.size`, so that has to be the height of a face box like Appl
 | `wisprToggle` | Wispr Flow's deep link, if the Windows app registers one; otherwise its hotkey |
 | `wisprCancel` | Wispr Flow's dismiss key (Escape by default), only while a microphone is recording |
 | `shortcut` | the recorded `KeyCombo` (key codes are per platform, so shortcuts are recorded again on Windows) |
+| `open` | `ShellExecute` on the binding's `target` (a path or a link) |
+| `runShortcut` | no direct counterpart; report it as unavailable, or map it to a script the user names |
 
 ## Two ways to use the core
 
@@ -66,5 +74,7 @@ size with `FaceFrame.size`, so that has to be the height of a face box like Appl
    run the recordings in `Fixtures/` through it: each fixture lists the triggers it must
    produce, so both implementations stay in agreement.
 
-The configuration file is the same JSON on both systems (`AppConfig`), stored in the user's
-application data folder.
+The configuration file is the same JSON on both systems (`AppConfig`), and so is the file of
+what the user taught (`GestureLibrary`): both live in the user's application data folder, one
+set per account. Recorded shapes and a calibration depend on the hand detector, so a library
+recorded with Apple Vision should be recorded again under MediaPipe rather than copied over.

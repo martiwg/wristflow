@@ -8,11 +8,16 @@ public struct CustomGesture: Codable, Hashable, Identifiable, Sendable {
     public var shape: ShapeTemplate?
     /// Set when the gesture is a movement.
     public var movement: MovementTemplate?
+    /// The `Trigger.key` of the built-in pose the recorded shape is also read as, when there
+    /// is one: a shape recorded over two fingers, say. The engine uses it to keep one showing
+    /// of the hand from counting as both.
+    public var alsoReadAs: String?
 
-    public init(id: String = UUID().uuidString, name: String, shape: ShapeTemplate) {
+    public init(id: String = UUID().uuidString, name: String, shape: ShapeTemplate, alsoReadAs: Pose? = nil) {
         self.id = id
         self.name = name
         self.shape = shape
+        self.alsoReadAs = alsoReadAs.map { Trigger(pose: $0).key }
     }
 
     public init(id: String = UUID().uuidString, name: String, movement: MovementTemplate) {
@@ -151,6 +156,14 @@ public struct GestureLibrary: Codable, Equatable, Sendable {
     /// cannot be added.
     public func clash(for candidate: Combination) -> Combination? {
         combinations.first { $0.id != candidate.id && $0.overlaps(candidate) }
+    }
+
+    /// The pose a hand shows: a shape the user recorded when it looks like one, otherwise
+    /// one of the built-in poses, read with the user's own thresholds.
+    public func read(_ hand: Hand) -> Pose? {
+        let recorded = shapes
+        if !recorded.isEmpty, let id = ShapeMatcher.match(hand, among: recorded) { return .custom(id) }
+        return PoseClassifier.classify(hand, profile: profile)
     }
 
     // MARK: Changing it
