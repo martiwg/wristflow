@@ -1,0 +1,13 @@
+{
+  "description": "One hand held up in front of the face, about 4 s each: one, two, three and four fingers, open palm, thumbs up, fist. Two, three and four are shown with the back of the hand. Face frames carry only the position and size of the face.",
+  "triggers": [
+    "oneFinger",
+    "twoFingers",
+    "threeFingers",
+    "fourFingers",
+    "palm",
+    "thumbsUp",
+    "fist"
+  ],
+  "mayMiss": 0
+}

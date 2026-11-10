@@ -36,7 +36,9 @@ struct SyntheticHand {
     static let threeFingers = SyntheticHand(curls: [.thumb: 1, .little: 1])
     static let fourFingers = SyntheticHand(curls: [.thumb: 1])
     static let thumbsUp = SyntheticHand(curls: [.index: 1, .middle: 1, .ring: 1, .little: 1])
-    static let halfClosed = SyntheticHand(curls: [.thumb: 0.5, .index: 0.5, .middle: 0.5, .ring: 0.5, .little: 0.5])
+    /// Fingers bent far enough to be neither up nor closed. Real fingers that are closed
+    /// towards the camera keep some reach in the flat image, so "half" is less bent than it sounds.
+    static let halfClosed = SyntheticHand(curls: [.thumb: 0.5, .index: 0.4, .middle: 0.4, .ring: 0.4, .little: 0.37])
 
     static let backOfHand = SyntheticHand(backToCamera: true)
 
@@ -44,6 +46,11 @@ struct SyntheticHand {
         switch pose {
         case .openPalm: openPalm
         case .backOfHand: backOfHand
+        case .one: pointing
+        case .two: peace
+        case .three: threeFingers
+        case .four: fourFingers
+        case .thumbsUp: thumbsUp
         case .fist: fist
         case .ok: ok
         }

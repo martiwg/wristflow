@@ -40,7 +40,9 @@ converting.
 Two things beyond the joints matter to the engine: `Hand.handedness` (palm and back of the hand
 are told apart with it; check that MediaPipe's label means the user's own left and right for
 an unmirrored image), and face frames, which have to keep coming while a hand is in view so a
-hand at the face can be told from a gesture.
+hand back by the head can be told from one held out in a gesture. The engine compares palm
+size with `FaceFrame.size`, so that has to be the height of a face box like Apple Vision's
+(roughly chin to forehead); check the ratio on a recording when using another detector.
 
 ### Actions
 
@@ -51,6 +53,7 @@ hand at the face can be told from a gesture.
 | `spaceLeft` / `spaceRight` | Ctrl + Win + Left / Right (virtual desktops) |
 | `missionControl` | Win + Tab (Task View) |
 | `previousTab` / `nextTab` | Ctrl + Shift + Tab / Ctrl + Tab |
+| `pressReturn` | Enter |
 | `wisprToggle` | Wispr Flow's deep link, if the Windows app registers one; otherwise its hotkey |
 | `wisprCancel` | Wispr Flow's dismiss key (Escape by default), only while a microphone is recording |
 | `shortcut` | the recorded `KeyCombo` (key codes are per platform, so shortcuts are recorded again on Windows) |

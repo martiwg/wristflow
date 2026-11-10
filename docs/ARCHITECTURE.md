@@ -36,8 +36,8 @@ Foundation only. It never sees an image: its input is landmark frames, its outpu
 ### How a gesture is decided
 
 1. A hand is usable when it is confident and close enough.
-2. A pose (open palm, back of the hand, fist, OK) fires once when it is held still for the
-   hold time. It cannot fire again until the hand changes shape or leaves. Palm and back are
+2. A pose (open palm, back of the hand, fist, OK, thumbs up, one to four fingers) fires once
+   when it is held still for the hold time. It cannot fire again until the hand changes shape or leaves. Palm and back are
    told apart by which way round the knuckles run, given which hand it is.
 3. A swipe is a flick of the open hand: the fingertips travel far in about a tenth of a
    second while the wrist stays roughly in place. Speed is what tells it from the slower way
@@ -45,9 +45,12 @@ Foundation only. It never sees an image: its input is landmark frames, its outpu
    A hand that has just come into view, and diagonal or downward movements, fire nothing.
 4. A swipe uses up the open hand for that appearance, so the hand that swiped does not also
    count as a palm or a back being shown.
-5. A hand lying over the face area, at about the face's distance from the camera, is not read
-   as a pose: it is biting a nail or propping up a chin. Swipes are not affected. This needs
-   the platform to pass face frames to the engine while a hand is in view.
+5. Poses are read only from a hand held out towards the camera. Such a hand is nearer the
+   camera than the face, so its palm looks at least as large as the face is tall; a hand back
+   by the head (biting a nail, propping up a chin) looks smaller and is ignored. Where the
+   hand is in the image does not decide it: people hold gestures up in front of their face.
+   Swipes are not affected. This needs the platform to pass face frames to the engine while
+   a hand is in view.
 
 `Fixtures/` holds landmark recordings of real gestures with the triggers they must produce;
 the tests replay them, and a port of the core to another language should too.

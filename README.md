@@ -7,25 +7,28 @@ WristFlow lives in the menu bar. macOS first; the gesture and gaze logic is kept
 Apple frameworks so a Windows version can be built on the same core
 (see [docs/WINDOWS.md](docs/WINDOWS.md)).
 
-**Status:** early. Swipes, palm against back of the hand, and the hand at the face are tuned on
-real recordings (see `Fixtures/`); fist, OK and gaze are still set on synthetic data.
+**Status:** early. Everything about hands except the OK sign is tuned on real recordings of
+one person (see `Fixtures/`); the OK sign and gaze are still set on synthetic data.
 
 ## Gestures
 
 | Gesture | How | Default action |
 | --- | --- | --- |
 | Open palm | Show the palm of your open hand and hold it still | Wispr Flow: start / stop dictation |
-| Back of the hand | Show the back of your open hand and hold it still | Wispr Flow: discard dictation |
+| Back of hand | Show the back of your open hand and hold it still | Wispr Flow: discard dictation |
 | Fist | Show a closed fist and hold it still | Previous tab |
 | OK sign | Thumb and index touching, other fingers up, hold | Next tab |
+| Thumbs up | Fist with the thumb pointing up, hold | Press Return (Enter) |
+| One, two, three, four fingers | Hold up that many fingers, starting from the index (five is the open palm) | None: yours to assign |
 | Swipe left / right | With your hand open, flick it sideways from the wrist | Move one desktop left / right |
 | Swipe up | With your hand open, flick it upwards from the wrist | Show all windows |
 
 A pose counts only when held still for a moment (0.4 s by default), and a swipe only when it
 is a quick flick, so ordinary hand movement does not fire anything. The slower way back after
-a swipe is ignored, so you can swipe several times in a row. A hand touching your face (biting
-a nail, chin on the hand, scratching) is not read as a pose. Every gesture can be bound to
-any action, including a shortcut you record, in Settings.
+a swipe is ignored, so you can swipe several times in a row. Poses are read from a hand held
+out towards the camera; a hand back by your head (biting a nail, chin on the hand, scratching)
+is not read as a pose. Every gesture can be bound to any action, including a shortcut you
+record, in Settings.
 
 ## Gaze focus
 

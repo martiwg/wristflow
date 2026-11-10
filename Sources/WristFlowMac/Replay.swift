@@ -1,9 +1,26 @@
 import Foundation
 import WristFlowCore
 
-/// `WristFlow --replay <file>`: runs a landmark recording through the gesture engine and prints
-/// what it reads and fires. A development tool for tuning thresholds on real gestures.
+/// `WristFlow --replay <file> [--set name=value ...]`: runs a landmark recording through the
+/// gesture engine and prints what it reads and fires. `--set` overrides a `GestureConfig`
+/// field for the run. A development tool for tuning thresholds on real gestures.
 enum Replay {
+    /// The default configuration with every `--set name=value` applied.
+    private static func config(from arguments: [String]) -> GestureConfig {
+        var fields = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(GestureConfig()))) as? [String: Any] ?? [:]
+        for (index, argument) in arguments.enumerated() where argument == "--set" && index + 1 < arguments.count {
+            let parts = arguments[index + 1].split(separator: "=", maxSplits: 1)
+            guard parts.count == 2, let value = Double(parts[1]), fields[String(parts[0])] != nil else {
+                print("Ignoring --set \(arguments[index + 1]): not a number, or no such setting.")
+                continue
+            }
+            fields[String(parts[0])] = value
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: fields),
+              let config = try? JSONDecoder().decode(GestureConfig.self, from: data) else { return GestureConfig() }
+        return config
+    }
+
     static func run(arguments: [String]) -> Int32 {
         guard let flag = arguments.firstIndex(of: "--replay"), arguments.count > flag + 1 else {
             print("usage: WristFlow --replay <file>")
@@ -21,14 +38,14 @@ enum Replay {
             return 1
         }
 
-        var engine = GestureEngine()
+        var engine = GestureEngine(config: config(from: arguments))
         var lastPose: Pose?
         var wasVisible = false
         var handFrames = 0
         var framesWithHand = 0
         var triggers: [Trigger] = []
 
-        var wasAtFace = false
+        var wasWithdrawn = false
         for frame in frames {
             if case .face(let face) = frame { engine.ingest(face) }
             guard case .hands(let hands) = frame else { continue }
@@ -41,9 +58,9 @@ enum Replay {
                 print("\(clock)  hand \(state.handVisible ? "appears" : "leaves")")
                 wasVisible = state.handVisible
             }
-            if state.atFace != wasAtFace {
-                print("\(clock)  hand \(state.atFace ? "at the face" : "away from the face")")
-                wasAtFace = state.atFace
+            if state.withdrawn != wasWithdrawn {
+                print("\(clock)  hand \(state.withdrawn ? "back by the head" : "held out")")
+                wasWithdrawn = state.withdrawn
             }
             if state.pose != lastPose {
                 print("\(clock)  pose \(state.pose?.rawValue ?? "none")")

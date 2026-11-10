@@ -22,25 +22,32 @@ public enum FingerState: Sendable {
 /// *straightness* number (knuckle-to-tip distance over the length of the finger as drawn),
 /// because a hand seen edge-on can hook a finger without losing reach.
 public enum PoseClassifier {
-    // The numbers below were chosen on a synthetic skeleton; they need checking against
-    // recordings of real hands.
+    // The finger and thumb numbers below were set on recordings of real hands (see Fixtures);
+    // the pinch distance is still the one chosen on a synthetic skeleton.
 
     /// Joints the detector reports below this confidence (0...1) are not believed.
     static let minJointConfidence: Float = 0.3
-    /// Reach, in palm sizes, from which a finger counts as extended.
-    static let extendedReach = 0.45
-    /// Reach, in palm sizes, up to which a finger counts as curled: the tip is no farther
-    /// from the wrist than its knuckle.
-    static let curledReach = 0.0
+    /// Reach, in palm sizes, from which a finger counts as extended. Recorded extended fingers
+    /// reach 0.64 and more.
+    static let extendedReach = 0.5
+    /// Reach, in palm sizes, up to which a finger counts as curled. A finger folded towards
+    /// the camera keeps a little reach in the flat image: recorded ones go up to 0.22.
+    static let curledReach = 0.3
     /// Knuckle-to-tip distance over the drawn length of the finger (0...1) an extended finger
     /// needs; 0.9 allows a bend of about 50 degrees at one joint.
     static let minStraightness = 0.9
-    /// Distance from the thumb tip to the palm centre, in palm sizes, from which the thumb
-    /// counts as extended: the tip is clear of the palm.
-    static let thumbExtendedClearance = 0.6
-    /// Distance from the thumb tip to the palm centre, in palm sizes, up to which the thumb
-    /// counts as curled: the tip lies over the palm.
-    static let thumbCurledClearance = 0.4
+    /// How far out to the side of the index knuckle the thumb tip must be, in palm sizes
+    /// measured along the knuckle line, for the thumb to count as extended. Recorded open
+    /// palms and thumbs up are at 0.48 and more.
+    static let thumbOutOffset = 0.3
+    /// How far out to the side the thumb tip may be and still count as folded in. Recorded
+    /// four-finger hands have it 0.09 to 0.25 inside the knuckle line; a fist about 0.2 outside,
+    /// which is neither.
+    static let thumbInOffset = 0.05
+    /// Base-to-tip distance over the drawn length of the thumb (0...1) an extended thumb needs.
+    static let minThumbStraightness = 0.85
+    /// How far from straight up, in degrees, the thumb may point in a thumbs up.
+    static let thumbsUpTilt = 50.0
     /// Distance between thumb tip and index tip, in palm sizes, under which they touch.
     static let pinchDistance = 0.3
     /// Smallest turn of the knuckle line against the palm axis (0 edge-on, about 1 flat to the camera) at which a side is called.
@@ -53,7 +60,9 @@ public enum PoseClassifier {
         /// The state each listed finger must be in; fingers not listed are free.
         let fingers: [Finger: FingerState]
         /// Whether thumb and index tips must touch (true), must not (false) or are free (nil).
-        let pinched: Bool?
+        var pinched: Bool?
+        /// Something the hand must also satisfy that finger states cannot express.
+        var also: (@Sendable (Hand) -> Bool)?
     }
 
     private static let rules: [Rule] = [
@@ -63,8 +72,31 @@ public enum PoseClassifier {
             fingers: [.thumb: .extended, .index: .extended, .middle: .extended, .ring: .extended, .little: .extended],
             pinched: false
         ),
-        Rule(pose: .fist, fingers: [.index: .curled, .middle: .curled, .ring: .curled, .little: .curled], pinched: nil),
+        // Five fingers is the open palm above; with the thumb folded in it is four.
+        Rule(
+            pose: .four,
+            fingers: [.thumb: .curled, .index: .extended, .middle: .extended, .ring: .extended, .little: .extended]
+        ),
+        // The thumb is free in the counts below: people hold the closed fingers down with it,
+        // tuck it in or leave it out, and mean the same number.
+        Rule(pose: .three, fingers: [.index: .extended, .middle: .extended, .ring: .extended, .little: .curled]),
+        Rule(pose: .two, fingers: [.index: .extended, .middle: .extended, .ring: .curled, .little: .curled]),
+        Rule(pose: .one, fingers: [.index: .extended, .middle: .curled, .ring: .curled, .little: .curled]),
+        Rule(
+            pose: .thumbsUp,
+            fingers: [.thumb: .extended, .index: .curled, .middle: .curled, .ring: .curled, .little: .curled],
+            also: { thumbPointsUp($0) }
+        ),
+        Rule(pose: .fist, fingers: [.index: .curled, .middle: .curled, .ring: .curled, .little: .curled]),
     ]
+
+    /// Whether the thumb points up in the image, give or take `thumbsUpTilt`.
+    private static func thumbPointsUp(_ hand: Hand) -> Bool {
+        let thumb = hand[.thumbTip] - hand[.thumbMCP]
+        guard thumb.length > 0 else { return false }
+        let fromUp = atan2(abs(thumb.x), thumb.y) * 180 / .pi
+        return fromUp <= thumbsUpTilt
+    }
 
     public static func fingerStates(_ hand: Hand) -> [Finger: FingerState] {
         var states: [Finger: FingerState] = [:]
@@ -80,7 +112,8 @@ public enum PoseClassifier {
         let pinched = isPinched(hand)
         let match = rules.first { rule in
             if let wanted = rule.pinched, wanted != pinched { return false }
-            return rule.fingers.allSatisfy { states[$0.key] == $0.value }
+            guard rule.fingers.allSatisfy({ states[$0.key] == $0.value }) else { return false }
+            return rule.also?(hand) ?? true
         }
         guard match?.pose == .openPalm, hand.handedness != nil else { return match?.pose }
         // An open hand seen edge-on shows neither side, so it is no pose at all.
@@ -123,11 +156,20 @@ public enum PoseClassifier {
         guard palm > 0, palm.isFinite, isTrusted(needed, in: hand) else { return .unclear }
 
         if finger == .thumb {
-            // The thumb folds sideways across the palm instead of towards the wrist, so what
-            // tells its states apart is how far its tip is from the middle of the palm.
-            let clearance = hand[.thumbTip].distance(to: hand.palmCenter) / palm
-            if clearance >= thumbExtendedClearance { return .extended }
-            if clearance <= thumbCurledClearance { return .curled }
+            // The thumb folds sideways across the palm instead of towards the wrist. What
+            // tells its states apart is which side of the index knuckle its tip is on, along
+            // the line of the knuckles: out beyond the hand, or in over the palm. Distance
+            // from the palm centre does not: a thumb folded over the palm and one held out
+            // were recorded at 0.63 and 0.80.
+            let knuckles = hand[.littleMCP] - hand[.indexMCP]
+            guard knuckles.length > 0 else { return .unclear }
+            let fromIndex = hand[.thumbTip] - hand[.indexMCP]
+            let outwards = -(fromIndex.x * knuckles.x + fromIndex.y * knuckles.y) / knuckles.length / palm
+            if outwards <= thumbInOffset { return .curled }
+            let bones = finger.joints.map { hand[$0] }
+            let drawn = zip(bones, bones.dropFirst()).reduce(0) { $0 + $1.0.distance(to: $1.1) }
+            let straightness = drawn > 0 ? bones[0].distance(to: bones[3]) / drawn : 0
+            if outwards >= thumbOutOffset, straightness >= minThumbStraightness { return .extended }
             return .unclear
         }
 

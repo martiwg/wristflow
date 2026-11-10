@@ -5,11 +5,13 @@ import Testing
 // MARK: - Pose classifier
 
 /// The same shape at several sizes and tilts, as either hand, with landmark noise.
-private func variants(of shape: SyntheticHand) -> [(label: String, hand: Hand)] {
+private func variants(
+    of shape: SyntheticHand, rotations: [Double] = [-45, -20, 0, 20, 45], hands: [Bool] = [false, true]
+) -> [(label: String, hand: Hand)] {
     var result: [(label: String, hand: Hand)] = []
     for scale in [0.07, 0.15, 0.3] {
-        for rotation in [-45.0, -20, 0, 20, 45] {
-            for isLeft in [false, true] {
+        for rotation in rotations {
+            for isLeft in hands {
                 for seed in UInt64(1)...4 {
                     var copy = shape
                     copy.scale = scale
@@ -35,7 +37,8 @@ private func misread(_ shape: SyntheticHand, as pose: Pose?) -> [String] {
 }
 
 @Suite struct PoseClassifierTests {
-    @Test(arguments: Pose.allCases)
+    // A thumbs up is the one pose that depends on which way it points; it has its own test.
+    @Test(arguments: Pose.allCases.filter { $0 != .thumbsUp })
     func poseIsReadAtAnySizeTiltAndHand(pose: Pose) {
         let wrong = misread(.shape(for: pose), as: pose)
         #expect(wrong.isEmpty, "\(wrong)")
@@ -54,8 +57,13 @@ private func misread(_ shape: SyntheticHand, as pose: Pose?) -> [String] {
     }
 
     @Test func thumbIsFreeInAFist() {
-        let wrong = misread(.thumbsUp, as: .fist)
-        #expect(wrong.isEmpty, "\(wrong)")
+        for thumb in [0.5, 1.0] {
+            let wrong = misread(SyntheticHand(curls: [.thumb: thumb, .index: 1, .middle: 1, .ring: 1, .little: 1]), as: .fist)
+            #expect(wrong.isEmpty, "\(wrong)")
+        }
+        // With the thumb out it is still a fist unless the thumb points up.
+        let other = variants(of: .thumbsUp).filter { ![.fist, .thumbsUp].contains(PoseClassifier.classify($0.hand)) }
+        #expect(other.isEmpty)
     }
 
     @Test func okSignToleratesSlightlyBentFingers() {
@@ -64,14 +72,36 @@ private func misread(_ shape: SyntheticHand, as pose: Pose?) -> [String] {
         #expect(wrong.isEmpty, "\(wrong)")
     }
 
+    @Test func thumbsUpNeedsTheThumbPointingUp() {
+        // The skeleton's thumb leans 40 degrees off its hand, to the left on a right hand.
+        // These tilts bring it within 30 degrees of straight up.
+        let upright = variants(of: .thumbsUp, rotations: [-70, -40, -10], hands: [false])
+            + variants(of: .thumbsUp, rotations: [10, 40, 70], hands: [true])
+        let missed = upright.filter { PoseClassifier.classify($0.hand) != .thumbsUp }.map(\.label)
+        #expect(missed.isEmpty, "\(missed)")
+
+        // Pointing sideways or down, the same hand is a fist.
+        let sideways = variants(of: .thumbsUp, rotations: [60, 140], hands: [false])
+            + variants(of: .thumbsUp, rotations: [-60, -140], hands: [true])
+        let wrong = sideways.filter { PoseClassifier.classify($0.hand) != .fist }.map(\.label)
+        #expect(wrong.isEmpty, "\(wrong)")
+    }
+
+    @Test func fiveFingersIsThePalmAndFourIsNot() {
+        #expect(PoseClassifier.classify(SyntheticHand.openPalm.hand()) == .openPalm)
+        #expect(PoseClassifier.classify(SyntheticHand.fourFingers.hand()) == .four)
+        // Thumb half way: neither clearly out nor clearly folded in.
+        let between = variants(of: SyntheticHand(curls: [.thumb: 0.35]))
+            .filter { [.openPalm, .backOfHand, .four].contains(PoseClassifier.classify($0.hand)) == false }
+        #expect(!between.isEmpty)
+    }
+
     @Test(arguments: [
-        ("three fingers up", SyntheticHand.threeFingers),
-        ("pointing", SyntheticHand.pointing),
-        ("peace sign", SyntheticHand.peace),
-        ("four fingers, thumb tucked", SyntheticHand.fourFingers),
+        ("index and little finger up", SyntheticHand(curls: [.thumb: 1, .middle: 1, .ring: 1])),
+        ("middle finger alone", SyntheticHand(curls: [.thumb: 1, .index: 1, .ring: 1, .little: 1])),
         ("half-closed hand", SyntheticHand.halfClosed),
         ("pinch with ring and little curled", SyntheticHand(curls: [.ring: 1, .little: 1], pinch: 1)),
-        ("fist with the index half out", SyntheticHand(curls: [.thumb: 1, .index: 0.45, .middle: 1, .ring: 1, .little: 1])),
+        ("fist with the index half out", SyntheticHand(curls: [.thumb: 1, .index: 0.4, .middle: 1, .ring: 1, .little: 1])),
     ])
     func nearMissIsNoPose(name: String, shape: SyntheticHand) {
         let wrong = misread(shape, as: nil)
@@ -549,7 +579,7 @@ private let frameRates = [10.0, 30.0]
 
     // MARK: Recorded gestures
 
-    @Test(arguments: ["wrist-flick-swipes", "palm-and-back", "hand-at-face"])
+    @Test(arguments: ["wrist-flick-swipes", "palm-and-back", "hand-at-face", "finger-counts"])
     func recordedGesturesAreRead(name: String) throws {
         let fixture = try Fixture(named: name)
         var engine = GestureEngine()
@@ -608,55 +638,89 @@ private let frameRates = [10.0, 30.0]
         #expect(session.triggers == [.swipeRight])
     }
 
-    // MARK: Hand at the face
+    // MARK: Hand back by the head
 
-    /// A face about as large next to `home`'s hand as a real one is next to a hand touching it.
-    private static func face(at center: Point2, time: Double) -> FaceFrame {
-        FaceFrame(time: time, yaw: 0, pitch: 0, roll: 0, center: center, size: palm / 0.8, pupilOffset: nil)
+    /// A face next to which the hand at `home` looks `ratio` face heights large.
+    private static func face(handLooks ratio: Double, time: Double = 0) -> FaceFrame {
+        FaceFrame(time: time, yaw: 0, pitch: 0, roll: 0, center: away(0, 0.8), size: palm / ratio, pupilOffset: nil)
     }
 
-    @Test(arguments: [SyntheticHand.fist, .openPalm, .ok])
-    func handAtTheFaceIsNotAPose(shape: SyntheticHand) {
+    @Test(arguments: [SyntheticHand.fist, .openPalm, .ok, .pointing])
+    func handBackByTheHeadIsNotAPose(shape: SyntheticHand) {
         var session = Session()
-        session.engine.ingest(Self.face(at: away(0, 0.8), time: 0))
+        // At the face's own distance from the camera a palm is about 0.8 face heights.
+        session.engine.ingest(Self.face(handLooks: 0.8))
         session.hold(shape, for: 2)
         #expect(session.triggers.isEmpty)
-        #expect(session.engine.state.atFace)
+        #expect(session.engine.state.withdrawn)
         #expect(session.engine.state.pose == nil)
     }
 
-    @Test func handBesideTheFaceIsRead() {
+    @Test func handHeldOutTowardsTheCameraIsRead() {
         var session = Session()
-        session.engine.ingest(Self.face(at: away(-4, 0.5), time: 0))
+        session.engine.ingest(Self.face(handLooks: 1.15))
         session.hold(.fist, for: 1)
         #expect(session.triggers == [.fist])
-        #expect(!session.engine.state.atFace)
+        #expect(!session.engine.state.withdrawn)
     }
 
-    @Test func handHeldInFrontOfTheFaceIsRead() {
+    @Test func handNearTheBoundaryDoesNotFlicker() {
         var session = Session()
-        // Nearer the camera than the face, so it looks large next to it.
-        var face = Self.face(at: away(0, 0.8), time: 0)
-        face.size = palm / 1.3
-        session.engine.ingest(face)
+        // Held out, then drifting back to in between: still held out.
+        session.engine.ingest(Self.face(handLooks: 1.1))
+        session.hold(.fist, for: 0.2)
+        session.engine.ingest(Self.face(handLooks: 0.95, time: session.now))
+        session.hold(.fist, for: 0.6)
+        #expect(session.triggers == [.fist])
+
+        // Back by the head, then drifting forward to in between: still back.
+        var other = Session()
+        other.engine.ingest(Self.face(handLooks: 0.8))
+        other.hold(.fist, for: 0.2)
+        other.engine.ingest(Self.face(handLooks: 0.95, time: other.now))
+        other.hold(.fist, for: 1)
+        #expect(other.triggers.isEmpty)
+    }
+
+    @Test func withoutAFaceEveryHandIsRead() {
+        var session = Session()
         session.hold(.fist, for: 1)
         #expect(session.triggers == [.fist])
     }
 
     @Test func aFaceNotSeenForAWhileIsForgotten() {
         var session = Session()
-        session.engine.ingest(Self.face(at: away(0, 0.8), time: 0))
+        session.engine.ingest(Self.face(handLooks: 0.8))
         session.nothing(for: 4)
         session.hold(.fist, for: 1)
         #expect(session.triggers == [.fist])
     }
 
-    @Test func swipeInFrontOfTheFaceStillCounts() {
+    @Test func swipeFromAHandBackByTheHeadStillCounts() {
         var session = Session()
-        session.engine.ingest(Self.face(at: away(0, 0.8), time: 0))
+        session.engine.ingest(Self.face(handLooks: 0.8))
         session.lean(-30, for: 0.3)
         session.flick(from: -30, to: 45)
         session.lean(45, for: 0.2)
+        #expect(session.triggers == [.swipeRight])
+    }
+
+    // MARK: Counting and thumbs up
+
+    @Test func fingerCountsFireInTurn() {
+        var session = Session()
+        for shape in [SyntheticHand.pointing, .peace, .threeFingers, .fourFingers, .openPalm] {
+            session.hold(shape, for: 0.6)
+        }
+        #expect(session.triggers == [.oneFinger, .twoFingers, .threeFingers, .fourFingers, .palm])
+    }
+
+    @Test func fourFingersDoNotFireAfterASwipe() {
+        var session = Session()
+        session.lean(-30, for: 0.3)
+        session.flick(from: -30, to: 45)
+        // The thumb often folds in during a flick, leaving four fingers showing.
+        session.lean(45, for: 2, shape: .fourFingers)
         #expect(session.triggers == [.swipeRight])
     }
 

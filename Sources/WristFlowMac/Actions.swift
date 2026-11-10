@@ -25,7 +25,7 @@ struct MacActionPerformer: @MainActor ActionPerforming {
             Self.wisprInstalled
         case .missionControl:
             FileManager.default.fileExists(atPath: Self.missionControlURL.path)
-        case .none, .spaceLeft, .spaceRight, .previousTab, .nextTab, .shortcut:
+        case .none, .spaceLeft, .spaceRight, .previousTab, .nextTab, .pressReturn, .shortcut:
             true
         }
     }
@@ -48,6 +48,8 @@ struct MacActionPerformer: @MainActor ActionPerforming {
             Self.post(keyCode: CGKeyCode(kVK_Tab), flags: [.maskControl, .maskShift])
         case .nextTab:
             Self.post(keyCode: CGKeyCode(kVK_Tab), flags: .maskControl)
+        case .pressReturn:
+            Self.post(keyCode: CGKeyCode(kVK_Return), flags: [])
         case .shortcut:
             if let combo = binding.combo {
                 Self.post(keyCode: CGKeyCode(combo.keyCode), flags: CGEventFlags(rawValue: combo.modifiers))

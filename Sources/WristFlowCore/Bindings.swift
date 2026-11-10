@@ -9,6 +9,16 @@ public enum Pose: String, Codable, CaseIterable, Sendable {
     case fist
     /// Thumb and index tips touching, the other three fingers extended.
     case ok
+    /// Index finger up, the others closed.
+    case one
+    /// Index and middle fingers up.
+    case two
+    /// Index, middle and ring fingers up.
+    case three
+    /// Four fingers up, thumb folded in. Five is the open palm.
+    case four
+    /// Fist with the thumb pointing up.
+    case thumbsUp
 }
 
 /// What the user can do to make WristFlow act.
@@ -17,6 +27,11 @@ public enum Trigger: String, Codable, CaseIterable, Identifiable, Sendable {
     case palmBack
     case fist
     case ok
+    case oneFinger
+    case twoFingers
+    case threeFingers
+    case fourFingers
+    case thumbsUp
     case swipeLeft
     case swipeRight
     case swipeUp
@@ -29,15 +44,25 @@ public enum Trigger: String, Codable, CaseIterable, Identifiable, Sendable {
         case .backOfHand: self = .palmBack
         case .fist: self = .fist
         case .ok: self = .ok
+        case .one: self = .oneFinger
+        case .two: self = .twoFingers
+        case .three: self = .threeFingers
+        case .four: self = .fourFingers
+        case .thumbsUp: self = .thumbsUp
         }
     }
 
     public var title: String {
         switch self {
         case .palm: "Open palm"
-        case .palmBack: "Back of the hand"
+        case .palmBack: "Back of hand"
         case .fist: "Fist"
         case .ok: "OK sign"
+        case .oneFinger: "One finger"
+        case .twoFingers: "Two fingers"
+        case .threeFingers: "Three fingers"
+        case .fourFingers: "Four fingers"
+        case .thumbsUp: "Thumbs up"
         case .swipeLeft: "Swipe left"
         case .swipeRight: "Swipe right"
         case .swipeUp: "Swipe up"
@@ -50,6 +75,11 @@ public enum Trigger: String, Codable, CaseIterable, Identifiable, Sendable {
         case .palmBack: "Show the back of your open hand to the camera and hold it still."
         case .fist: "Show a closed fist and hold it still."
         case .ok: "Touch thumb and index finger, other fingers up, and hold."
+        case .oneFinger: "Hold up your index finger."
+        case .twoFingers: "Hold up your index and middle fingers."
+        case .threeFingers: "Hold up your index, middle and ring fingers."
+        case .fourFingers: "Hold up four fingers with your thumb folded in. Five fingers is the open palm."
+        case .thumbsUp: "Make a fist with your thumb pointing up and hold it still."
         case .swipeLeft: "With your hand open, flick it to your left from the wrist."
         case .swipeRight: "With your hand open, flick it to your right from the wrist."
         case .swipeUp: "With your hand open, flick it upwards from the wrist."
@@ -68,6 +98,7 @@ public enum ActionKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case missionControl
     case previousTab
     case nextTab
+    case pressReturn
     case shortcut
 
     public var id: String { rawValue }
@@ -82,6 +113,7 @@ public enum ActionKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .missionControl: "Show all windows"
         case .previousTab: "Previous tab"
         case .nextTab: "Next tab"
+        case .pressReturn: "Press Return (Enter)"
         case .shortcut: "Custom shortcut"
         }
     }
@@ -142,6 +174,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         Trigger.palmBack.rawValue: ActionBinding(kind: .wisprCancel),
         Trigger.fist.rawValue: ActionBinding(kind: .previousTab),
         Trigger.ok.rawValue: ActionBinding(kind: .nextTab),
+        Trigger.thumbsUp.rawValue: ActionBinding(kind: .pressReturn),
         Trigger.swipeLeft.rawValue: ActionBinding(kind: .spaceLeft),
         Trigger.swipeRight.rawValue: ActionBinding(kind: .spaceRight),
         Trigger.swipeUp.rawValue: ActionBinding(kind: .missionControl),
