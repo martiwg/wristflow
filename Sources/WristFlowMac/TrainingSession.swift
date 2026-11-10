@@ -99,6 +99,9 @@ final class TrainingSession {
     @ObservationIgnored private var shapes: [Handedness: [[Hand]]] = [:]
     @ObservationIgnored private var tracker = MovementTracker()
     @ObservationIgnored private var segments: [MovementSegment] = []
+    /// When the movement under way began (frame time), and when a hand was last seen.
+    @ObservationIgnored private var movingSince: Double?
+    @ObservationIgnored private var lastHandAt = 0.0
     @ObservationIgnored private var trial: GestureEngine?
     @ObservationIgnored private var samples: [CalibrationSample] = []
     @ObservationIgnored private var swipeFrames: [HandFrame] = []
@@ -307,6 +310,7 @@ final class TrainingSession {
         case .movement:
             takesWanted = Self.movementTakes
             tracker = MovementTracker()
+            movingSince = nil
             hint = "Hold your hand still, make the movement, then hold still again"
         case .calibrate(let index):
             beginCalibrationStep(index)
@@ -462,24 +466,53 @@ final class TrainingSession {
         let limits = GestureConfig()
         let usable = frame.hands.filter { Double($0.confidence) >= limits.minConfidence && $0.palmSize >= limits.minPalmSize }
         guard let hand = usable.max(by: { $0.palmSize < $1.palmSize }) else {
-            trail = tracker.trail
+            // A hand that goes out of the picture in the middle of a movement is the usual
+            // reason a take does not count, and nothing else would tell the user.
+            if let moving = movingSince, frame.time - lastHandAt > tracker.config.maxGap, lastHandAt > moving {
+                hint = "Your hand left the picture. Make it smaller and stop with your hand in view"
+                movingSince = nil
+                trail = []
+            }
             return
         }
+        lastHandAt = frame.time
+        let before = tracker.trail
         let segment = tracker.ingest(
             time: frame.time, center: hand.palmCenter, palmSize: hand.palmSize, pose: model.library.read(hand)
         )
         trail = tracker.trail
-        hint = tracker.isMoving ? "Keep going, then hold still" : "Hold still, then make the movement"
-        guard let segment else { return }
 
-        segments.append(segment)
-        takesDone = segments.count
-        if segments.count < Self.movementTakes {
-            hint = "Good. Do it again the same way"
-        } else {
-            hint = "Got it"
-            advance { [weak self] in self?.finishMovement() }
+        if let segment {
+            movingSince = nil
+            segments.append(segment)
+            takesDone = segments.count
+            if segments.count < Self.movementTakes {
+                hint = "Good. Do it again the same way"
+            } else {
+                hint = "Got it"
+                advance { [weak self] in self?.finishMovement() }
+            }
+        } else if tracker.isMoving {
+            if movingSince == nil {
+                movingSince = frame.time
+                hint = "Keep going, then hold still"
+            }
+        } else if movingSince != nil {
+            // Came to rest, and it was not a movement: say why.
+            movingSince = nil
+            hint = Self.verdict(on: before, palmSize: hand.palmSize, config: tracker.config)
         }
+    }
+
+    /// Why a stretch of motion that ended in a rest did not count as a take.
+    private static func verdict(on trail: [Point2], palmSize: Double, config: MovementConfig) -> String {
+        guard let minX = trail.map(\.x).min(), let maxX = trail.map(\.x).max(),
+              let minY = trail.map(\.y).min(), let maxY = trail.map(\.y).max(), palmSize > 0 else {
+            return "Hold still first, then make the movement"
+        }
+        let extent = Point2(x: maxX - minX, y: maxY - minY).length / palmSize
+        if extent < config.minExtent { return "Too small to count. Make it a little bigger" }
+        return "That did not count. Hold still, make it in one go, and hold still again"
     }
 
     /// Forgets the last take of the movement, for one that went wrong.

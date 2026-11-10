@@ -7,9 +7,10 @@ WristFlow lives in the menu bar. macOS first; the gesture and gaze logic is kept
 Apple frameworks so a Windows version can be built on the same core
 (see [docs/WINDOWS.md](docs/WINDOWS.md)).
 
-**Status:** early. The built-in hand gestures except the OK sign are tuned on real recordings
-of one person (see `Fixtures/`), and a calibration fits them to anyone else. The OK sign, gaze,
-two-hand combinations and recorded movements are still set on synthetic data.
+**Status:** early. The built-in hand gestures except the OK sign, and two-hand combinations,
+are checked on real recordings of one person (see `Fixtures/`); a calibration fits the
+gestures to anyone else. The OK sign, gaze and recorded movements are still set on synthetic
+data.
 
 ## Gestures
 
@@ -47,9 +48,12 @@ minute:
 
 - **A hand shape** you hold still, like the built-in poses: horns, a pinky up, an L, thumbs
   down. You show it three times with each hand (either hand can be skipped).
-- **A movement** your hand draws between two moments of holding still: a circle, a zigzag, a
-  tick. You make it four times. The hand shape it starts from is part of the gesture, which
-  keeps everyday hand movement from setting it off. Movements are less reliable than shapes.
+- **A movement** your hand draws between two moments of holding still: a circle, a zigzag.
+  You make it four times. The hand shape it starts from is part of the gesture, which keeps
+  everyday hand movement from setting it off. The whole movement has to stay inside the
+  camera's picture, so keep it small (about two hands across); one that starts or ends out
+  of view, or stops at a corner on the way, is not read. Movements are less reliable than
+  shapes.
 
 Before saving, WristFlow says whether the new gesture could be mistaken for another one and
 lets you try it for real. A recorded shape can be one hand of a combination.

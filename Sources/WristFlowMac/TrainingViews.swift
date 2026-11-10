@@ -76,7 +76,7 @@ struct TrainingView: View {
             CaptureStage(
                 session: session, model: model,
                 title: "Make the movement",
-                detail: "Hold your hand still, make the movement, and stop. Do it \(TrainingSession.movementTakes) times the same way, starting from the same hand shape, for example one finger."
+                detail: "Hold your hand still, make the movement, and stop: all inside the picture, so keep it small, about two hands across. Do it \(TrainingSession.movementTakes) times the same way, starting from the same hand shape, for example one finger."
             )
         case .calibrate:
             CaptureStage(
@@ -163,7 +163,7 @@ private struct GestureIntro: View {
                     ) { session.kind = .shape }
                     KindCard(
                         symbol: "scribble.variable", title: "A movement",
-                        detail: "A path your hand draws: a circle, a zigzag, a tick. Less reliable than a shape; distinctive movements work best.",
+                        detail: "A path your hand draws between two moments of holding still, inside the picture: a circle, a zigzag. Less reliable than a shape.",
                         selected: session.kind == .movement
                     ) { session.kind = .movement }
                 }

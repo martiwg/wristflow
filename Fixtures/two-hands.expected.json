@@ -1,0 +1,33 @@
+{
+  "description": "Two hands held up together, about 4 s each: left fist with right index finger, left index finger with right fist, both palms; then the right fist alone for 3 s and the left index finger raised next to it. Face frames carry only the position and size of the face.",
+  "library": {
+    "combinations": [
+      {
+        "id": "fist-one",
+        "left": "fist",
+        "right": "oneFinger",
+        "eitherWay": false
+      },
+      {
+        "id": "one-fist",
+        "left": "oneFinger",
+        "right": "fist",
+        "eitherWay": false
+      },
+      {
+        "id": "palms",
+        "left": "palm",
+        "right": "palm",
+        "eitherWay": true
+      }
+    ]
+  },
+  "triggers": [
+    "combo:fist-one",
+    "combo:one-fist",
+    "combo:palms",
+    "fist",
+    "combo:one-fist"
+  ],
+  "mayMiss": 0
+}

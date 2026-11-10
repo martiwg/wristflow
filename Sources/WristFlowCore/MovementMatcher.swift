@@ -13,8 +13,10 @@ public struct MovementConfig: Codable, Equatable, Sendable {
     /// How far the palm centre may drift within `restTime`, in palm sizes, and still count as resting.
     public var restRadius = 0.12
     /// Longest wait between two frames, in seconds, that is still the same stretch of motion.
-    /// After a longer one the hand has to rest again before a movement can start.
-    public var maxGap = 0.2
+    /// After a longer one the hand has to rest again before a movement can start. A fast
+    /// hand blurs, and in recordings the detector loses it for up to 0.17 s at a time; a hand
+    /// that leaves the picture is gone for half a second or more.
+    public var maxGap = 0.3
     /// Smallest movement that counts: the diagonal of the box around its path, in palm sizes.
     /// Anything smaller is a hand shifting, not a gesture.
     public var minExtent = 1.5

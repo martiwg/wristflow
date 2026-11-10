@@ -254,6 +254,8 @@ private struct Fixture {
         var triggers: [Trigger]
         /// How many of them the engine is allowed to miss.
         var mayMiss: Int
+        /// What the user had set up when the recording was made, when that matters.
+        var library: GestureLibrary?
     }
 
     let frames: [RecordedFrame]
@@ -618,10 +620,11 @@ private let frameRates = [10.0, 30.0]
 
     // MARK: Recorded gestures
 
-    @Test(arguments: ["wrist-flick-swipes", "palm-and-back", "hand-at-face", "finger-counts"])
+    @Test(arguments: ["wrist-flick-swipes", "palm-and-back", "hand-at-face", "finger-counts", "two-hands"])
     func recordedGesturesAreRead(name: String) throws {
         let fixture = try Fixture(named: name)
         var engine = GestureEngine()
+        engine.library = fixture.expected.library ?? GestureLibrary()
         var fired: [Trigger] = []
         for frame in fixture.frames {
             switch frame {
