@@ -43,9 +43,9 @@ public enum Trigger: String, Codable, CaseIterable, Identifiable, Sendable {
         case .palm: "Show your open hand to the camera and hold it still."
         case .fist: "Show a closed fist and hold it still."
         case .ok: "Touch thumb and index finger, other fingers up, and hold."
-        case .swipeLeft: "Show your open hand, then sweep it to your left."
-        case .swipeRight: "Show your open hand, then sweep it to your right."
-        case .swipeUp: "Show your open hand, then sweep it upwards."
+        case .swipeLeft: "With your hand open, flick it to your left from the wrist."
+        case .swipeRight: "With your hand open, flick it to your right from the wrist."
+        case .swipeUp: "With your hand open, flick it upwards from the wrist."
         }
     }
 }

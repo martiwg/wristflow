@@ -15,18 +15,26 @@ public struct GestureConfig: Codable, Equatable, Sendable {
     public var minPalmSize = 0.06
     /// Fastest a hand is expected to move, in palm sizes per second; a hand seen farther than this allows is another hand.
     public var maxHandSpeed = 40.0
-    /// Seconds the open palm must stay within `restRadius` before a swipe can start from there.
+    /// Seconds the palm must stay within `restRadius` for the hand to count as at rest, which is when its pose can be trusted.
     public var restTime = 0.12
-    /// Seconds of rest needed, instead of `restTime`, once the palm has already moved off after being armed.
-    public var rearmRestTime = 0.35
     /// How far the palm centre may drift, in palm sizes, and still count as resting.
     public var restRadius = 0.1
-    /// Straight-line distance from the resting point, in palm sizes, that makes a swipe.
-    public var swipeDistance = 1.2
-    /// Seconds, counted from leaving rest, within which `swipeDistance` must be covered.
-    public var swipeWindow = 0.45
+    /// How far the fingertips must travel within `swipeWindow`, in palm sizes, to make a swipe.
+    public var swipeTravel = 1.8
+    /// Seconds within which `swipeTravel` must be covered: a swipe is a flick, not a turn.
+    public var swipeWindow = 0.12
     /// How many times larger the travel along the swipe axis must be than across it (ratio).
-    public var swipeDominance = 2.0
+    public var swipeDominance = 1.5
+    /// How many times farther the fingertips must travel than the wrist (ratio): the hand has to pivot, not just be carried along.
+    public var swipePivot = 1.4
+    /// How far the fingertips must be from the wrist, in palm sizes, for the hand to count as open enough to swipe.
+    public var swipeOpenness = 1.4
+    /// Seconds a hand must have been in view before a movement of it can be a swipe.
+    public var swipeSettle = 0.25
+    /// Seconds after a swipe during which no other swipe is read.
+    public var swipeGap = 0.25
+    /// Seconds after a swipe during which a movement the opposite way is taken for the hand going back.
+    public var returnWindow = 0.5
     /// Seconds over which the measured palm size is averaged, so a blurred frame cannot change the yardstick.
     public var palmSizeSmoothing = 0.25
 
@@ -46,11 +54,15 @@ public struct GestureConfig: Codable, Equatable, Sendable {
         minPalmSize = try value(.minPalmSize, defaults.minPalmSize)
         maxHandSpeed = try value(.maxHandSpeed, defaults.maxHandSpeed)
         restTime = try value(.restTime, defaults.restTime)
-        rearmRestTime = try value(.rearmRestTime, defaults.rearmRestTime)
         restRadius = try value(.restRadius, defaults.restRadius)
-        swipeDistance = try value(.swipeDistance, defaults.swipeDistance)
+        swipeTravel = try value(.swipeTravel, defaults.swipeTravel)
         swipeWindow = try value(.swipeWindow, defaults.swipeWindow)
         swipeDominance = try value(.swipeDominance, defaults.swipeDominance)
+        swipePivot = try value(.swipePivot, defaults.swipePivot)
+        swipeOpenness = try value(.swipeOpenness, defaults.swipeOpenness)
+        swipeSettle = try value(.swipeSettle, defaults.swipeSettle)
+        swipeGap = try value(.swipeGap, defaults.swipeGap)
+        returnWindow = try value(.returnWindow, defaults.returnWindow)
         palmSizeSmoothing = try value(.palmSizeSmoothing, defaults.palmSizeSmoothing)
     }
 }
@@ -63,7 +75,7 @@ public struct GestureState: Equatable, Sendable {
     public var pose: Pose?
     /// 0...1 towards firing the pose; stays at 1 once it fired, and at 0 when a swipe took its place.
     public var holdProgress: Double
-    /// The open palm has come to rest, so moving it now can become a swipe.
+    /// The hand is open and has been in view long enough, so a flick of it now is a swipe.
     public var armedForSwipe: Bool
 
     public init(handVisible: Bool = false, pose: Pose? = nil, holdProgress: Double = 0, armedForSwipe: Bool = false) {
@@ -74,7 +86,11 @@ public struct GestureState: Equatable, Sendable {
     }
 }
 
-/// Turns a stream of hand frames into triggers: poses held still, and swipes of the open palm.
+/// Turns a stream of hand frames into triggers: poses held still, and swipes of the open hand.
+///
+/// A swipe is a flick: the fingertips sweeping sideways or upwards in about a tenth of a second
+/// while the wrist stays roughly where it is. That is how people swipe at a screen in practice,
+/// and its speed is what tells it from the slower way back and from a hand merely moving.
 ///
 /// All timing comes from `HandFrame.time`, so the frame rate may vary and frames may be missing.
 public struct GestureEngine: Sendable {
@@ -105,7 +121,7 @@ public struct GestureEngine: Sendable {
         var seen: Int?
         if let followed = track {
             seen = index(of: followed, among: usable, at: now)
-            if seen == nil, now - followed.lastSeen > followed.patience(config) { track = nil }
+            if seen == nil, now - followed.lastSeen > config.glitchTolerance { track = nil }
         }
         if track == nil, let largest = usable.indices.max(by: { usable[$0].palmSize < usable[$1].palmSize }) {
             track = Track(hand: usable[largest], time: now)
@@ -117,17 +133,8 @@ public struct GestureEngine: Sendable {
             state = GestureState()
             return nil
         }
-        guard let seen else {
-            // A short dropout leaves everything as it was. A longer wait is only granted in
-            // the middle of a swipe; nobody saw what the hand did meanwhile, so it does not
-            // count as holding, and the preview should not show a hand that is not there.
-            if now - followed.lastSeen > config.glitchTolerance {
-                followed.restartHold(at: now)
-                track = followed
-                state = GestureState()
-            }
-            return nil
-        }
+        // A dropout short enough to keep the appearance leaves everything as it was.
+        guard let seen else { return nil }
 
         let hand = usable[seen]
         let elapsed = now - followed.lastSeen
@@ -139,14 +146,14 @@ public struct GestureEngine: Sendable {
             reading, trusted: reached(rested, config.restTime), at: now, elapsed: elapsed, config: config
         )
         var trigger = followed.completeHold(reading, at: now, config: config).map(Trigger.init(pose:))
-        let swipe = followed.followSwipe(rested: rested, at: now, config: config)
+        let swipe = followed.followSwipe(at: now, config: config)
         trigger = trigger ?? swipe
 
         state = GestureState(
             handVisible: true,
             pose: reading,
             holdProgress: followed.holdProgress(at: now, holdTime: config.holdTime),
-            armedForSwipe: followed.swipe.isLive
+            armedForSwipe: followed.canSwipe(at: now, config: config)
         )
         track = followed
         return trigger
@@ -202,30 +209,14 @@ private struct Track: Sendable {
         var doubted = 0.0
         /// Its trigger has been emitted.
         var fired = false
-        /// A swipe was made from it, which replaces its trigger.
-        var swiped = false
     }
 
-    /// Where a swipe would start from.
-    struct Origin: Sendable {
-        var center: Point2
+    /// Where the hand's ends were on one frame; a swipe is read from how these move.
+    struct Reach: Sendable {
         var time: Double
-        /// Palm size while at rest; the frames of the swipe itself are too blurred to measure it.
-        var palmSize: Double
-    }
-
-    enum SwipeStage: Sendable {
-        /// The palm has to come to rest before anything can happen.
-        case waiting
-        /// Resting with an open palm; the origin follows the palm.
-        case armed(Origin)
-        /// Left the resting point; watching how far and which way it goes.
-        case moving(Origin)
-
-        var isLive: Bool {
-            if case .waiting = self { return false }
-            return true
-        }
+        /// Middle of the four fingertips.
+        var tips: Point2
+        var wrist: Point2
     }
 
     var center: Point2
@@ -236,22 +227,20 @@ private struct Track: Sendable {
     var hold: Hold?
     /// A different pose that has started to show while `hold` is still being forgiven.
     var challenger: (pose: Pose, since: Double)?
-    var swipe = SwipeStage.waiting
-    /// The palm has moved off after being armed, so the next arming needs the longer rest.
-    var hasLeftRest = false
+    /// When this appearance began.
+    let appeared: Double
+    /// Recent fingertip and wrist positions, oldest first, reaching back `swipeWindow`.
+    var reaches: [Reach] = []
+    var lastSwipe: (time: Double, trigger: Trigger)?
+    /// A swipe was made in this appearance, which uses up its open palm: the hand that swiped
+    /// is still open afterwards, and must not also count as a palm being shown.
+    var palmSpent = false
 
     init(hand: Hand, time: Double) {
         center = hand.palmCenter
         palmSize = hand.palmSize
         lastSeen = time
-    }
-
-    /// Seconds the hand may go unseen before this appearance is over.
-    func patience(_ config: GestureConfig) -> Double {
-        // The fast part of a swipe can blur the hand out of detection altogether. Giving up
-        // then would lose the swipe and take the hand for a new one where it stops, whose
-        // way back would fire the opposite swipe.
-        swipe.isLive ? max(config.glitchTolerance, config.swipeWindow) : config.glitchTolerance
+        appeared = time
     }
 
     mutating func observe(_ hand: Hand, at now: Double, config: GestureConfig) {
@@ -261,8 +250,23 @@ private struct Track: Sendable {
         lastSeen = now
         path.append(Sample(time: now, center: center))
         // Keep one sample at or beyond the horizon, so a rest of exactly that length can be seen.
-        let horizon = now - max(config.restTime, config.rearmRestTime)
+        let horizon = now - config.restTime
         while path.count > 1, path[1].time <= horizon { path.removeFirst() }
+
+        // The small allowance keeps a frame that is nominally `swipeWindow` old.
+        reaches.removeAll { now - $0.time > config.swipeWindow + 0.005 }
+        if let tips = Self.fingertips(of: hand) {
+            reaches.append(Reach(time: now, tips: tips, wrist: hand[.wrist]))
+        }
+    }
+
+    /// Middle of the four fingertips, or nil when too few of them are known. Fingertips are
+    /// what a flick moves most, far more than the palm.
+    private static func fingertips(of hand: Hand) -> Point2? {
+        let known = [Joint.indexTip, .middleTip, .ringTip, .littleTip].filter { hand.confidence(of: $0) > 0 }
+        // With fewer, the middle would jump whenever a finger comes or goes.
+        guard known.count >= 3 else { return nil }
+        return known.reduce(Point2.zero) { $0 + hand[$1] } * (1 / Double(known.count))
     }
 
     /// Seconds the palm centre has stayed within `radius` (image heights) of where it is now.
@@ -290,9 +294,8 @@ private struct Track: Sendable {
     mutating func followPose(_ reading: Pose?, trusted: Bool, at now: Double, elapsed: Double, config: GestureConfig) {
         if var current = hold {
             // Motion blur garbles the pose of a moving hand. That must not end a hold that has
-            // already been used, or the same pose would fire again where the hand stops, nor
-            // one a swipe is being made from.
-            let shielded = !trusted && (current.fired || current.swiped || swipe.isLive)
+            // already been used, or the same pose would fire again where the hand stops.
+            let shielded = !trusted && current.fired
             if reading == current.pose {
                 current.lastAgreed = now
                 challenger = nil
@@ -326,60 +329,62 @@ private struct Track: Sendable {
 
     /// The pose whose hold completes on this frame, if any.
     mutating func completeHold(_ reading: Pose?, at now: Double, config: GestureConfig) -> Pose? {
-        guard var current = hold, !current.fired, !current.swiped, reading == current.pose,
+        guard var current = hold, !current.fired, reading == current.pose,
+              !(current.pose == .openPalm && palmSpent),
               reached(now - current.since, config.holdTime) else { return nil }
         current.fired = true
         hold = current
+        // Deliberately showing another pose ends the swiping; the palm means palm again.
+        palmSpent = false
         return current.pose
     }
 
     func holdProgress(at now: Double, holdTime: Double) -> Double {
-        guard let hold, !hold.swiped else { return 0 }
+        guard let hold, !(hold.pose == .openPalm && palmSpent) else { return 0 }
         if hold.fired || holdTime <= 0 { return 1 }
         return min(1, max(0, (now - hold.since) / holdTime))
     }
 
-    /// Advances the swipe stage; `rested` is how long the palm has been at rest, in seconds.
-    mutating func followSwipe(rested: Double, at now: Double, config: GestureConfig) -> Trigger? {
-        let resting = reached(rested, config.restTime)
-        // Once the palm hold has fired, the palm has been used; a swipe would be a second action.
-        let palmReady = hold.map { $0.pose == .openPalm && !$0.fired } ?? false
-        let here = Origin(center: center, time: now, palmSize: palmSize)
+    /// Whether a flick made now could count: the hand has settled into view, is open, and has
+    /// not already been used for a held pose.
+    func canSwipe(at now: Double, config: GestureConfig) -> Bool {
+        guard hold?.fired != true, reached(now - appeared, config.swipeSettle), let latest = reaches.last else { return false }
+        return latest.tips.distance(to: latest.wrist) >= config.swipeOpenness * palmSize
+    }
 
-        switch swipe {
-        case .waiting:
-            let needed = hasLeftRest ? config.rearmRestTime : config.restTime
-            if palmReady, reached(rested, needed) { swipe = .armed(here) }
-            return nil
-        case .armed(let origin):
-            guard palmReady else {
-                swipe = .waiting
-                return nil
-            }
-            if resting {
-                swipe = .armed(here)
-                return nil
-            }
-            // From here on the hand is in motion and its pose cannot be trusted, so only the
-            // palm centre is followed. The turning point of a return stroke is slow for about
-            // as long as the first rest takes, hence the longer rest from now on.
-            hasLeftRest = true
-            swipe = .moving(origin)
-        case .moving:
-            break
-        }
-
-        guard case .moving(let origin) = swipe else { return nil }
-        if resting || hold?.fired == true || now - origin.time > config.swipeWindow + 1e-9 {
-            swipe = .waiting
-            return nil
-        }
-        let travel = (center - origin.center) * (1 / origin.palmSize)
-        guard travel.length >= config.swipeDistance,
+    /// The swipe completed on this frame, if any.
+    mutating func followSwipe(at now: Double, config: GestureConfig) -> Trigger? {
+        guard let latest = reaches.last, latest.time == now, let earliest = reaches.first, earliest.time < now else { return nil }
+        let travel = (latest.tips - earliest.tips) * (1 / palmSize)
+        guard travel.length >= config.swipeTravel else { return nil }
+        // A hand coming into view is moving fast too, and so is one being taken away.
+        guard reached(earliest.time - appeared, config.swipeSettle) else { return nil }
+        // Open at some point of the movement; on its fastest frames the fingers are a blur.
+        let open = reaches.contains { $0.tips.distance(to: $0.wrist) >= config.swipeOpenness * palmSize }
+        // Reaching for something carries wrist and fingers along together; a swipe pivots.
+        let wristTravel = latest.wrist.distance(to: earliest.wrist) / palmSize
+        guard open, wristTravel * config.swipePivot <= travel.length,
               let trigger = Self.direction(of: travel, dominance: config.swipeDominance) else { return nil }
-        swipe = .waiting
-        hold?.swiped = true
+        // Once a pose hold has fired, the hand has been used; a swipe would be a second action.
+        guard hold?.fired != true else { return nil }
+        if let lastSwipe {
+            let since = now - lastSwipe.time
+            if since < config.swipeGap { return nil }
+            // The first fast movement is the swipe. What comes straight back is the hand
+            // returning, however briskly.
+            if since < config.returnWindow, trigger == Self.opposite(of: lastSwipe.trigger) { return nil }
+        }
+        lastSwipe = (now, trigger)
+        palmSpent = true
         return trigger
+    }
+
+    private static func opposite(of trigger: Trigger) -> Trigger? {
+        switch trigger {
+        case .swipeLeft: .swipeRight
+        case .swipeRight: .swipeLeft
+        default: nil
+        }
     }
 
     /// The swipe a displacement stands for. Sideways or up only: a hand going down is a hand

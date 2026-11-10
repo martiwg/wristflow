@@ -38,10 +38,15 @@ Foundation only. It never sees an image: its input is landmark frames, its outpu
 1. A hand is usable when it is confident and close enough.
 2. A pose (open palm, fist, OK) fires once when it is held still for the hold time. It cannot
    fire again until the hand changes shape or leaves.
-3. A swipe starts from an open palm at rest and needs a fast, mostly straight movement. A hand
-   that enters the frame already moving, the way back after a swipe, and diagonal or downward
-   movements fire nothing.
-4. A swipe replaces the palm action for that appearance of the hand.
+3. A swipe is a flick of the open hand: the fingertips travel far in about a tenth of a
+   second while the wrist stays roughly in place. Speed is what tells it from the slower way
+   back, which is ignored, and the pivot is what tells it from a hand being carried somewhere.
+   A hand that has just come into view, and diagonal or downward movements, fire nothing.
+4. A swipe uses up the open palm for that appearance of the hand, so the hand that swiped
+   does not also count as a palm being shown.
+
+`Fixtures/` holds landmark recordings of real gestures with the triggers they must produce;
+the tests replay them, and a port of the core to another language should too.
 
 ### How gaze is decided
 

@@ -184,14 +184,58 @@ private struct Session {
         run(duration) { _ in [] }
     }
 
-    /// Open palm at rest at `home`, long enough to arm a swipe and too short to fire the hold.
+    /// Open palm at rest at `home`, long enough to settle and too short to fire the hold.
     mutating func restPalm() {
-        hold(.openPalm, for: 0.25)
+        hold(.openPalm, for: 0.3)
     }
 
-    /// A quick sweep of the open palm from `start` to `end`.
+    /// A quick sweep of the whole hand from `start` to `end`.
     mutating func sweep(from start: Point2 = home, to end: Point2, shape: SyntheticHand = .openPalm) {
         move(shape, from: start, to: end, over: 0.25)
+    }
+
+    /// Holds the hand leaning `degrees` towards the user's right, its wrist at `home`.
+    mutating func lean(_ degrees: Double, for duration: Double, shape: SyntheticHand = .openPalm) {
+        run(duration) { _ in [leaning(degrees, shape: shape)] }
+    }
+
+    /// Turns the hand about its wrist, the way a wrist flick looks to the camera.
+    mutating func flick(from start: Double, to end: Double, over duration: Double = 0.1, shape: SyntheticHand = .openPalm) {
+        run(duration) { elapsed in [leaning(start + (end - start) * elapsed / duration, shape: shape)] }
+    }
+}
+
+/// `shape` turned about its wrist, which stays at `home`: 0 is upright, positive leans towards
+/// the user's right.
+private func leaning(_ degrees: Double, shape: SyntheticHand = .openPalm) -> SyntheticHand {
+    var turned = shape
+    turned.scale = palm
+    // The skeleton turns counter-clockwise, which in the mirror view is towards the left.
+    turned.rotation = -degrees
+    turned.center = .zero
+    let wrist = turned.hand()[.wrist]
+    turned.center = home - wrist
+    return turned
+}
+
+/// A landmark recording of real gestures and the triggers it has to produce.
+private struct Fixture {
+    struct Expected: Decodable {
+        var triggers: [Trigger]
+        /// How many of them the engine is allowed to miss.
+        var mayMiss: Int
+    }
+
+    let frames: [RecordedFrame]
+    let expected: Expected
+
+    init(named name: String) throws {
+        let folder = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Fixtures")
+        frames = try Recording.load(folder.appendingPathComponent("\(name).jsonl"))
+        let data = try Data(contentsOf: folder.appendingPathComponent("\(name).expected.json"))
+        expected = try JSONDecoder().decode(Expected.self, from: data)
     }
 }
 
@@ -310,37 +354,30 @@ private let frameRates = [10.0, 30.0]
     // MARK: Swipes
 
     @Test(arguments: [
-        (Trigger.swipeLeft, -2.5, 0.0),
-        (Trigger.swipeRight, 2.5, 0.0),
-        (Trigger.swipeUp, 0.0, 2.5),
+        (Trigger.swipeRight, -30.0, 45.0),
+        (Trigger.swipeLeft, 30.0, -45.0),
+        (Trigger.swipeUp, 100.0, 20.0),
     ], frameRates)
-    func swipeFromRest(expected: (trigger: Trigger, dx: Double, dy: Double), fps: Double) {
+    func flickIsASwipe(expected: (trigger: Trigger, from: Double, to: Double), fps: Double) {
         var session = Session(fps: fps)
-        session.restPalm()
-        session.sweep(to: away(expected.dx, expected.dy))
-        session.hold(.openPalm, at: away(expected.dx, expected.dy), for: 0.2)
-        session.nothing(for: 0.3)
+        session.lean(expected.from, for: 0.3)
+        session.flick(from: expected.from, to: expected.to)
+        session.lean(expected.to, for: 0.2)
+        session.nothing(for: 0.6)
         #expect(session.triggers == [expected.trigger])
     }
 
-    @Test func swipeIsReadWhileThePoseIsBlurred() {
+    @Test func flickIsReadWhileTheHandIsBlurred() {
         var session = Session()
-        session.restPalm()
-        // A fast hand smears, and the classifier sees no pose at all on those frames.
-        session.sweep(to: away(2.5, 0), shape: .halfClosed)
-        session.hold(.openPalm, at: away(2.5, 0), for: 1.5)
-        #expect(session.triggers == [.swipeRight])
-    }
-
-    @Test(arguments: frameRates)
-    func swipeIsReadWhenTheHandVanishesDuringTheFastPart(fps: Double) {
-        var session = Session(fps: fps)
-        session.restPalm()
-        // Smeared so badly that the detector reports no hand until it slows down again.
-        session.nothing(for: 0.2)
-        session.hold(.openPalm, at: away(2.5, 0), for: 0.15)
-        session.sweep(from: away(2.5, 0), to: home)
-        session.hold(.openPalm, for: 0.2)
+        session.lean(-30, for: 0.3)
+        // The fastest frame of a flick smears: the detector is unsure of the whole hand there.
+        var smeared = SyntheticHand.halfClosed
+        smeared.confidence = 0.4
+        session.run(0.1) { elapsed in
+            let shape = elapsed > 0.03 && elapsed < 0.06 ? smeared : SyntheticHand.openPalm
+            return [leaning(-30 + 75 * elapsed / 0.1, shape: shape)]
+        }
+        session.lean(45, for: 0.2)
         session.nothing(for: 0.6)
         #expect(session.triggers == [.swipeRight])
     }
@@ -358,12 +395,76 @@ private let frameRates = [10.0, 30.0]
         #expect(time >= back + 0.4 - 1 / 30 - 1e-6)
     }
 
-    @Test func slightlySlantedSwipeStillCounts() {
-        var session = Session()
-        session.restPalm()
-        session.sweep(to: away(2.5, 0.6))
-        session.nothing(for: 0.3)
+    @Test(arguments: [0.1, 0.25], frameRates)
+    func theWayBackIsNotASwipe(returnTime: Double, fps: Double) {
+        var session = Session(fps: fps)
+        session.lean(-30, for: 0.3)
+        session.flick(from: -30, to: 45)
+        session.lean(45, for: 0.1)
+        session.flick(from: 45, to: -30, over: returnTime)
+        session.lean(-30, for: 0.2)
+        session.nothing(for: 0.6)
         #expect(session.triggers == [.swipeRight])
+    }
+
+    @Test(arguments: frameRates)
+    func flicksInARowEachCount(fps: Double) {
+        var session = Session(fps: fps)
+        session.lean(30, for: 0.3)
+        for _ in 0..<4 {
+            session.flick(from: 30, to: -45)
+            session.flick(from: -45, to: 30, over: 0.2)
+            session.lean(30, for: 0.2)
+        }
+        session.nothing(for: 0.6)
+        #expect(session.triggers == [.swipeLeft, .swipeLeft, .swipeLeft, .swipeLeft])
+    }
+
+    @Test func aSwipeTheOtherWayCountsOnceTheHandHasComeBack() {
+        var session = Session()
+        session.lean(-30, for: 0.3)
+        session.flick(from: -30, to: 45)
+        session.lean(45, for: 0.6)
+        session.flick(from: 45, to: -30)
+        session.lean(-30, for: 0.2)
+        #expect(session.triggers == [.swipeRight, .swipeLeft])
+    }
+
+    @Test func slowTurnOfTheHandIsNotASwipe() {
+        var session = Session()
+        session.lean(-30, for: 0.3)
+        session.flick(from: -30, to: 45, over: 0.4)
+        session.lean(45, for: 0.2)
+        session.nothing(for: 0.6)
+        #expect(session.triggers.isEmpty)
+    }
+
+    @Test func smallFlickIsNotASwipe() {
+        var session = Session()
+        session.lean(-10, for: 0.3)
+        session.flick(from: -10, to: 15)
+        session.lean(15, for: 0.2)
+        session.nothing(for: 0.6)
+        #expect(session.triggers.isEmpty)
+    }
+
+    @Test(arguments: frameRates)
+    func flickDownwardsFiresNothing(fps: Double) {
+        var session = Session(fps: fps)
+        session.lean(20, for: 0.3)
+        session.flick(from: 20, to: 100)
+        session.lean(100, for: 0.2)
+        session.nothing(for: 0.6)
+        #expect(session.triggers.isEmpty)
+    }
+
+    @Test func handThatHasJustAppearedDoesNotSwipe() {
+        var session = Session()
+        session.lean(-30, for: 0.1)
+        session.flick(from: -30, to: 45)
+        session.lean(45, for: 0.2)
+        session.nothing(for: 0.6)
+        #expect(session.triggers.isEmpty)
     }
 
     @Test(arguments: frameRates)
@@ -382,101 +483,92 @@ private let frameRates = [10.0, 30.0]
         #expect(session.triggers.isEmpty)
     }
 
-    @Test(arguments: frameRates)
-    func downwardTravelFiresNothing(fps: Double) {
-        var session = Session(fps: fps)
+    @Test(arguments: [(2.5, 0.0), (-2.5, 0.0), (0.0, 2.5)])
+    func carryingTheWholeHandAcrossIsNotASwipe(dx: Double, dy: Double) {
+        var session = Session()
         session.restPalm()
-        session.sweep(to: away(0, -2.5))
-        session.nothing(for: 0.3)
+        // As fast as a flick, but wrist and fingers travel together: a hand going somewhere.
+        session.move(.openPalm, from: home, to: away(dx, dy), over: 0.1, eased: false)
+        session.hold(.openPalm, at: away(dx, dy), for: 0.2)
+        session.nothing(for: 0.6)
         #expect(session.triggers.isEmpty)
-    }
-
-    @Test(arguments: [(1.8, 1.8), (-1.8, 1.8), (2.2, 1.3), (1.3, 2.2), (2.0, -1.5)])
-    func diagonalMovementFiresNothing(dx: Double, dy: Double) {
-        var session = Session()
-        session.restPalm()
-        session.sweep(to: away(dx, dy))
-        session.nothing(for: 0.3)
-        #expect(session.triggers.isEmpty)
-    }
-
-    @Test func shortOrSlowMovementIsNotASwipe() {
-        var short = Session()
-        short.restPalm()
-        short.sweep(to: away(0.8, 0))
-        short.nothing(for: 0.3)
-        #expect(short.triggers.isEmpty)
-
-        // About 2 palm sizes per second: too fast to be a hold, too slow to be a swipe.
-        var slow = Session()
-        slow.hold(.openPalm, for: 0.2)
-        slow.move(.openPalm, from: home, to: away(2.5, 0), over: 1.2, eased: false)
-        slow.nothing(for: 0.3)
-        #expect(slow.triggers.isEmpty)
-    }
-
-    @Test(arguments: [0.0, 0.1], frameRates)
-    func returnStrokeIsIgnored(pause: Double, fps: Double) {
-        var session = Session(fps: fps)
-        session.restPalm()
-        session.sweep(to: away(2.5, 0))
-        session.hold(.openPalm, at: away(2.5, 0), for: pause)
-        session.sweep(from: away(2.5, 0), to: home)
-        session.hold(.openPalm, for: 0.2)
-        session.nothing(for: 0.3)
-        #expect(session.triggers == [.swipeRight])
-    }
-
-    @Test(arguments: frameRates)
-    func swipeReturnRestSwipeGivesTwoSwipes(fps: Double) {
-        var session = Session(fps: fps)
-        session.restPalm()
-        session.sweep(to: away(2.5, 0))
-        session.sweep(from: away(2.5, 0), to: home)
-        session.hold(.openPalm, for: 0.5)
-        session.sweep(to: away(2.5, 0))
-        session.hold(.openPalm, at: away(2.5, 0), for: 1)
-        #expect(session.triggers == [.swipeRight, .swipeRight])
-    }
-
-    @Test func palmDoesNotFireAfterASwipe() {
-        var session = Session()
-        session.restPalm()
-        session.sweep(to: away(0, 2.5))
-        session.hold(.openPalm, at: away(0, 2.5), for: 2)
-        #expect(session.triggers == [.swipeUp])
-        #expect(session.engine.state.holdProgress == 0)
-    }
-
-    @Test func palmFiresAgainOnceTheHandHasChangedAfterASwipe() {
-        var session = Session()
-        session.restPalm()
-        session.sweep(to: away(2.5, 0))
-        session.hold(.halfClosed, at: away(2.5, 0), for: 0.3)
-        session.hold(.openPalm, at: away(2.5, 0), for: 0.6)
-        #expect(session.triggers == [.swipeRight, .palm])
-    }
-
-    @Test func noSwipeOnceThePalmHoldHasFired() {
-        var session = Session()
-        session.hold(.openPalm, for: 0.6)
-        session.sweep(to: away(2.5, 0))
-        session.sweep(from: away(2.5, 0), to: home)
-        session.hold(.openPalm, for: 0.6)
-        #expect(session.triggers == [.palm])
-
-        session.nothing(for: 0.3)
-        session.restPalm()
-        session.sweep(to: away(2.5, 0))
-        #expect(session.triggers == [.palm, .swipeRight])
     }
 
     @Test func fistDoesNotSwipe() {
         var session = Session()
-        session.hold(.fist, for: 0.25)
-        session.sweep(to: away(2.5, 0), shape: .fist)
-        session.nothing(for: 0.3)
+        session.lean(-30, for: 0.3, shape: .fist)
+        session.flick(from: -30, to: 45, shape: .fist)
+        session.lean(45, for: 0.2, shape: .fist)
+        session.nothing(for: 0.6)
         #expect(session.triggers.isEmpty)
+    }
+
+    @Test func palmDoesNotFireAfterASwipe() {
+        var session = Session()
+        session.lean(-30, for: 0.3)
+        session.flick(from: -30, to: 45)
+        session.lean(45, for: 2)
+        #expect(session.triggers == [.swipeRight])
+        #expect(session.engine.state.holdProgress == 0)
+    }
+
+    @Test func palmFiresAgainOnceTheHandHasLeftAfterASwipe() {
+        var session = Session()
+        session.lean(-30, for: 0.3)
+        session.flick(from: -30, to: 45)
+        session.lean(45, for: 0.1)
+        session.nothing(for: 0.6)
+        session.hold(.openPalm, for: 0.6)
+        #expect(session.triggers == [.swipeRight, .palm])
+    }
+
+    @Test func anotherPoseAfterASwipeFreesThePalm() {
+        var session = Session()
+        session.lean(-30, for: 0.3)
+        session.flick(from: -30, to: 45)
+        session.lean(45, for: 0.1)
+        session.hold(.fist, for: 0.6)
+        session.hold(.openPalm, for: 0.6)
+        #expect(session.triggers == [.swipeRight, .fist, .palm])
+    }
+
+    @Test func noSwipeOnceThePalmHoldHasFired() {
+        var session = Session()
+        session.lean(-30, for: 0.6)
+        session.flick(from: -30, to: 45)
+        session.flick(from: 45, to: -30, over: 0.2)
+        session.lean(-30, for: 0.6)
+        #expect(session.triggers == [.palm])
+
+        session.nothing(for: 0.6)
+        session.lean(-30, for: 0.3)
+        session.flick(from: -30, to: 45)
+        session.lean(45, for: 0.1)
+        #expect(session.triggers == [.palm, .swipeRight])
+    }
+
+    // MARK: Recorded gestures
+
+    @Test func recordedWristFlicksAreRead() throws {
+        let fixture = try Fixture(named: "wrist-flick-swipes")
+        var engine = GestureEngine()
+        var fired: [Trigger] = []
+        for frame in fixture.frames {
+            if case .hands(let hands) = frame, let trigger = engine.ingest(hands) { fired.append(trigger) }
+        }
+        // Everything fired has to be one of the swipes that were made, in the order they were
+        // made; a few may be missed, none may be invented.
+        var remaining = fixture.expected.triggers[...]
+        var invented: [Trigger] = []
+        for trigger in fired {
+            if let index = remaining.firstIndex(of: trigger) {
+                remaining = remaining[(index + 1)...]
+            } else {
+                invented.append(trigger)
+            }
+        }
+        #expect(invented.isEmpty)
+        #expect(fired.count >= fixture.expected.triggers.count - fixture.expected.mayMiss)
     }
 
     // MARK: Things that must fire nothing
@@ -569,7 +661,7 @@ private let frameRates = [10.0, 30.0]
         var session = Session(fps: fps)
         let tracked = SyntheticHand.openPalm.scaled(0.2).at(Point2(x: 0.6, y: 0.5))
         let other = SyntheticHand.openPalm.at(Point2(x: 1.2, y: 0.5))
-        session.run(0.3) { _ in [tracked, other] }
+        session.run(0.4) { _ in [tracked, other] }
         #expect(session.engine.state.armedForSwipe)
         session.run(0.3) { _ in [other] }
         session.nothing(for: 0.3)
@@ -582,7 +674,7 @@ private let frameRates = [10.0, 30.0]
         var session = Session()
         #expect(session.engine.state == GestureState())
 
-        session.hold(.openPalm, for: 0.25)
+        session.hold(.openPalm, for: 0.3)
         var state = session.engine.state
         #expect(state.handVisible)
         #expect(state.pose == .openPalm)

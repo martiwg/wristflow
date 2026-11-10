@@ -16,7 +16,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Text("Test waits two seconds before firing, so you can switch to the app you want to try it in. Poses must be held still for a moment, and swipes start from an open palm.")
+                Text("Test waits two seconds before firing, so you can switch to the app you want to try it in. Poses must be held still for a moment. A swipe is a quick flick of the open hand from the wrist.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

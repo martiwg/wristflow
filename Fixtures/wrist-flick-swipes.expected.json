@@ -1,0 +1,17 @@
+{
+  "description": "Both hands, 42 wrist-flick swipes in groups of right, left and up, each followed by a slower return. The 26th (a swipe left at about 16.8 s) is half lost by the detector.",
+  "triggers": [
+    "swipeRight", "swipeRight", "swipeRight", "swipeRight", "swipeRight",
+    "swipeLeft", "swipeLeft", "swipeLeft", "swipeLeft",
+    "swipeUp", "swipeUp", "swipeUp", "swipeUp",
+    "swipeLeft", "swipeLeft", "swipeLeft",
+    "swipeRight", "swipeRight", "swipeRight",
+    "swipeUp", "swipeUp", "swipeUp",
+    "swipeLeft", "swipeLeft", "swipeLeft", "swipeLeft",
+    "swipeRight", "swipeRight", "swipeRight", "swipeRight",
+    "swipeLeft", "swipeLeft", "swipeLeft", "swipeLeft",
+    "swipeRight", "swipeRight", "swipeRight", "swipeRight",
+    "swipeUp", "swipeUp", "swipeUp", "swipeUp"
+  ],
+  "mayMiss": 2
+}
