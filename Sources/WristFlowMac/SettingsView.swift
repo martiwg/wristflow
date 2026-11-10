@@ -24,28 +24,26 @@ struct SettingsView: View {
             case .general: "General"
             }
         }
-
-        var symbol: String {
-            switch self {
-            case .gestures: "hand.raised"
-            case .myGestures: "hand.draw"
-            case .combinations: "hands.clap"
-            case .actions: "bolt"
-            case .calibration: "slider.horizontal.3"
-            case .general: "gearshape"
-            }
-        }
     }
 
     var body: some View {
-        TabView(selection: Binding(get: { tab ?? initialTab }, set: { tab = $0 })) {
-            ForEach(Tab.allCases) { tab in
-                content(of: tab)
-                    .tabItem { Label(tab.title, systemImage: tab.symbol) }
-                    .tag(tab)
+        let selected = tab ?? initialTab
+        // A plain row of buttons instead of a `TabView`: in a window of this kind the system
+        // tab bar is not always drawn, which leaves every tab but the first out of reach.
+        VStack(spacing: 0) {
+            Picker("Section", selection: Binding(get: { selected }, set: { tab = $0 })) {
+                ForEach(Tab.allCases) { tab in
+                    Text(tab.title).tag(tab)
+                }
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
+            content(of: selected)
         }
-        .frame(width: 600, height: 640)
+        .frame(width: 640, height: 660)
     }
 
     @ViewBuilder
