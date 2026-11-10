@@ -18,7 +18,7 @@ public protocol LandmarkSource: AnyObject {
 public protocol ActionPerforming {
     /// False when the action cannot work here (for instance Wispr Flow is not installed).
     func isAvailable(_ kind: ActionKind) -> Bool
-    func perform(_ binding: Binding)
+    func perform(_ binding: ActionBinding)
 }
 
 /// A screen the user can look at.

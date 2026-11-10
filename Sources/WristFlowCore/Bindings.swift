@@ -93,7 +93,7 @@ public struct KeyCombo: Codable, Hashable, Sendable {
     }
 }
 
-public struct Binding: Codable, Hashable, Sendable {
+public struct ActionBinding: Codable, Hashable, Sendable {
     public var kind: ActionKind
     public var combo: KeyCombo?
 
@@ -102,7 +102,7 @@ public struct Binding: Codable, Hashable, Sendable {
         self.combo = combo
     }
 
-    public static let none = Binding(kind: .none)
+    public static let none = ActionBinding(kind: .none)
 
     public var summary: String {
         if kind == .shortcut { return combo?.label ?? "No shortcut set" }
@@ -115,7 +115,7 @@ public struct Binding: Codable, Hashable, Sendable {
 public struct AppConfig: Codable, Equatable, Sendable {
     public var enabled = true
     /// `Trigger.rawValue` to what it does.
-    public var bindings: [String: Binding] = AppConfig.defaultBindings
+    public var bindings: [String: ActionBinding] = AppConfig.defaultBindings
     /// Seconds a pose has to be held still before it counts.
     public var holdTime = 0.4
     public var gazeFocusEnabled = true
@@ -128,20 +128,20 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     public init() {}
 
-    public static let defaultBindings: [String: Binding] = [
-        Trigger.palm.rawValue: Binding(kind: .wisprToggle),
-        Trigger.fist.rawValue: Binding(kind: .previousTab),
-        Trigger.ok.rawValue: Binding(kind: .nextTab),
-        Trigger.swipeLeft.rawValue: Binding(kind: .spaceLeft),
-        Trigger.swipeRight.rawValue: Binding(kind: .spaceRight),
-        Trigger.swipeUp.rawValue: Binding(kind: .missionControl),
+    public static let defaultBindings: [String: ActionBinding] = [
+        Trigger.palm.rawValue: ActionBinding(kind: .wisprToggle),
+        Trigger.fist.rawValue: ActionBinding(kind: .previousTab),
+        Trigger.ok.rawValue: ActionBinding(kind: .nextTab),
+        Trigger.swipeLeft.rawValue: ActionBinding(kind: .spaceLeft),
+        Trigger.swipeRight.rawValue: ActionBinding(kind: .spaceRight),
+        Trigger.swipeUp.rawValue: ActionBinding(kind: .missionControl),
     ]
 
-    public func binding(for trigger: Trigger) -> Binding {
+    public func binding(for trigger: Trigger) -> ActionBinding {
         bindings[trigger.rawValue] ?? .none
     }
 
-    public mutating func setBinding(_ binding: Binding, for trigger: Trigger) {
+    public mutating func setBinding(_ binding: ActionBinding, for trigger: Trigger) {
         bindings[trigger.rawValue] = binding
     }
 
@@ -149,7 +149,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = AppConfig()
         enabled = try values.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
-        bindings = try values.decodeIfPresent([String: Binding].self, forKey: .bindings) ?? defaults.bindings
+        bindings = try values.decodeIfPresent([String: ActionBinding].self, forKey: .bindings) ?? defaults.bindings
         holdTime = try values.decodeIfPresent(Double.self, forKey: .holdTime) ?? defaults.holdTime
         gazeFocusEnabled = try values.decodeIfPresent(Bool.self, forKey: .gazeFocusEnabled) ?? defaults.gazeFocusEnabled
         gazeDwell = try values.decodeIfPresent(Double.self, forKey: .gazeDwell) ?? defaults.gazeDwell
