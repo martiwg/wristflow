@@ -37,6 +37,18 @@ public struct GestureConfig: Codable, Equatable, Sendable {
     public var returnWindow = 0.5
     /// Seconds over which the measured palm size is averaged, so a blurred frame cannot change the yardstick.
     public var palmSizeSmoothing = 0.25
+    /// How far to each side of the face centre a hand counts as at the face, in face heights.
+    public var faceReachAcross = 0.75
+    /// How far below the face centre a hand counts as at the face, in face heights; reaches the chin and neck.
+    public var faceReachBelow = 0.9
+    /// How far above the face centre a hand counts as at the face, in face heights.
+    public var faceReachAbove = 0.6
+    /// How many of the 21 joints must lie in that area for the hand to count as at the face.
+    public var faceJoints = 8.0
+    /// Largest palm size, in face heights, of a hand at the face; a larger hand is in front of the face, nearer the camera.
+    public var faceDepthRatio = 1.1
+    /// Seconds the last seen face is remembered; a hand at the face can hide it from the detector.
+    public var faceMemory = 3.0
 
     public init() {}
 
@@ -64,6 +76,12 @@ public struct GestureConfig: Codable, Equatable, Sendable {
         swipeGap = try value(.swipeGap, defaults.swipeGap)
         returnWindow = try value(.returnWindow, defaults.returnWindow)
         palmSizeSmoothing = try value(.palmSizeSmoothing, defaults.palmSizeSmoothing)
+        faceReachAcross = try value(.faceReachAcross, defaults.faceReachAcross)
+        faceReachBelow = try value(.faceReachBelow, defaults.faceReachBelow)
+        faceReachAbove = try value(.faceReachAbove, defaults.faceReachAbove)
+        faceJoints = try value(.faceJoints, defaults.faceJoints)
+        faceDepthRatio = try value(.faceDepthRatio, defaults.faceDepthRatio)
+        faceMemory = try value(.faceMemory, defaults.faceMemory)
     }
 }
 
@@ -77,12 +95,17 @@ public struct GestureState: Equatable, Sendable {
     public var holdProgress: Double
     /// The hand is open and has been in view long enough, so a flick of it now is a swipe.
     public var armedForSwipe: Bool
+    /// The hand is touching or resting on the face, so its shape is not read as a pose.
+    public var atFace: Bool
 
-    public init(handVisible: Bool = false, pose: Pose? = nil, holdProgress: Double = 0, armedForSwipe: Bool = false) {
+    public init(
+        handVisible: Bool = false, pose: Pose? = nil, holdProgress: Double = 0, armedForSwipe: Bool = false, atFace: Bool = false
+    ) {
         self.handVisible = handVisible
         self.pose = pose
         self.holdProgress = holdProgress
         self.armedForSwipe = armedForSwipe
+        self.atFace = atFace
     }
 }
 
@@ -100,6 +123,8 @@ public struct GestureEngine: Sendable {
     private var track: Track?
     /// Where the usable hands that are not being followed were in the latest frame.
     private var bystanders: [Point2] = []
+    /// The face as last reported, to tell a hand at the face from a hand making a pose.
+    private var face: FaceFrame?
 
     public init(config: GestureConfig = GestureConfig()) {
         self.config = config
@@ -109,7 +134,13 @@ public struct GestureEngine: Sendable {
     public mutating func reset() {
         track = nil
         bystanders = []
+        face = nil
         state = GestureState()
+    }
+
+    /// Tells the engine where the user's face is. Without it every hand is read as a gesture.
+    public mutating func ingest(_ face: FaceFrame) {
+        self.face = face
     }
 
     public mutating func ingest(_ frame: HandFrame) -> Trigger? {
@@ -139,7 +170,11 @@ public struct GestureEngine: Sendable {
         let hand = usable[seen]
         let elapsed = now - followed.lastSeen
         followed.observe(hand, at: now, config: config)
-        let reading = PoseClassifier.classify(hand)
+        // A hand at the face is biting a nail, propping up a chin or scratching, and takes
+        // the shape of a fist or an open palm while doing it. Swipes are left alone: nothing
+        // done at the face looks like a flick, and people do swipe in front of their face.
+        let atFace = isAtFace(hand, palmSize: followed.palmSize, at: now)
+        let reading = atFace ? nil : PoseClassifier.classify(hand)
         let rested = followed.restDuration(radius: config.restRadius * followed.palmSize)
 
         followed.followPose(
@@ -153,10 +188,25 @@ public struct GestureEngine: Sendable {
             handVisible: true,
             pose: reading,
             holdProgress: followed.holdProgress(at: now, holdTime: config.holdTime),
-            armedForSwipe: followed.canSwipe(at: now, config: config)
+            armedForSwipe: followed.canSwipe(at: now, config: config),
+            atFace: atFace
         )
         track = followed
         return trigger
+    }
+
+    /// Whether the hand lies over the face area at about the face's distance from the camera.
+    private func isAtFace(_ hand: Hand, palmSize: Double, at now: Double) -> Bool {
+        guard let face, face.size > 0, abs(now - face.time) <= config.faceMemory else { return false }
+        // A hand held up between the camera and the face covers it in the image as well, but
+        // being nearer the camera it looks larger next to the face than one touching it.
+        guard palmSize <= config.faceDepthRatio * face.size else { return false }
+        let inArea = hand.points.filter { point in
+            let across = abs(point.x - face.center.x) / face.size
+            let up = (point.y - face.center.y) / face.size
+            return across <= config.faceReachAcross && up <= config.faceReachAbove && up >= -config.faceReachBelow
+        }
+        return Double(inArea.count) >= config.faceJoints
     }
 
     private func isUsable(_ hand: Hand) -> Bool {
@@ -181,6 +231,11 @@ public struct GestureEngine: Sendable {
         }
         return best?.index
     }
+}
+
+private extension Pose {
+    /// The poses a swiping hand passes through and ends in.
+    var isOpenHand: Bool { self == .openPalm || self == .backOfHand }
 }
 
 /// Frame times are sums of floating-point intervals, so "0.4 s later" can arrive as 0.3999….
@@ -232,8 +287,9 @@ private struct Track: Sendable {
     /// Recent fingertip and wrist positions, oldest first, reaching back `swipeWindow`.
     var reaches: [Reach] = []
     var lastSwipe: (time: Double, trigger: Trigger)?
-    /// A swipe was made in this appearance, which uses up its open palm: the hand that swiped
-    /// is still open afterwards, and must not also count as a palm being shown.
+    /// A swipe was made in this appearance, which uses up its open hand: the hand that swiped
+    /// is still open afterwards, whichever side it ends up showing, and must not also count as
+    /// a palm or a back being shown.
     var palmSpent = false
 
     init(hand: Hand, time: Double) {
@@ -330,7 +386,7 @@ private struct Track: Sendable {
     /// The pose whose hold completes on this frame, if any.
     mutating func completeHold(_ reading: Pose?, at now: Double, config: GestureConfig) -> Pose? {
         guard var current = hold, !current.fired, reading == current.pose,
-              !(current.pose == .openPalm && palmSpent),
+              !(current.pose.isOpenHand && palmSpent),
               reached(now - current.since, config.holdTime) else { return nil }
         current.fired = true
         hold = current
@@ -340,7 +396,7 @@ private struct Track: Sendable {
     }
 
     func holdProgress(at now: Double, holdTime: Double) -> Double {
-        guard let hold, !(hold.pose == .openPalm && palmSpent) else { return 0 }
+        guard let hold, !(hold.pose.isOpenHand && palmSpent) else { return 0 }
         if hold.fired || holdTime <= 0 { return 1 }
         return min(1, max(0, (now - hold.since) / holdTime))
     }

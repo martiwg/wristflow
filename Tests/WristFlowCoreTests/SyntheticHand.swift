@@ -19,6 +19,8 @@ struct SyntheticHand {
     /// Tilt in the image plane, in degrees, counter-clockwise.
     var rotation = 0.0
     var isLeft = false
+    /// Shows the back of the hand to the camera instead of the palm.
+    var backToCamera = false
     /// Largest random offset added to each coordinate, in palm sizes.
     var jitter = 0.0
     var seed: UInt64 = 0
@@ -36,9 +38,12 @@ struct SyntheticHand {
     static let thumbsUp = SyntheticHand(curls: [.index: 1, .middle: 1, .ring: 1, .little: 1])
     static let halfClosed = SyntheticHand(curls: [.thumb: 0.5, .index: 0.5, .middle: 0.5, .ring: 0.5, .little: 0.5])
 
+    static let backOfHand = SyntheticHand(backToCamera: true)
+
     static func shape(for pose: Pose) -> SyntheticHand {
         switch pose {
         case .openPalm: openPalm
+        case .backOfHand: backOfHand
         case .fist: fist
         case .ok: ok
         }
@@ -71,7 +76,8 @@ struct SyntheticHand {
         let points = local.map { point -> Point2 in
             var p = point - palmCenter
             p = p + Point2(x: random.signedUnit() * jitter, y: random.signedUnit() * jitter)
-            if isLeft { p.x = -p.x }
+            // Turning a hand over mirrors its outline, just as swapping hands does.
+            if isLeft != backToCamera { p.x = -p.x }
             let turned = Point2(x: p.x * cos(angle) - p.y * sin(angle), y: p.x * sin(angle) + p.y * cos(angle))
             return center + turned * scale
         }

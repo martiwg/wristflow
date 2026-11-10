@@ -26,6 +26,9 @@ final class VisionLandmarker: LandmarkSource, @unchecked Sendable {
     private static let idleDelay = 2.0
     /// Head pose changes slowly, so the face is measured less often than hands.
     private static let faceRate = 10.0
+    /// With nobody using the face and no hand in view, it is still looked for now and then,
+    /// so that when a hand does appear it is already known whether it is at the face.
+    private static let backgroundFaceRate = 2.0
     /// A frame counts as due this fraction of a period after the previous one, so timing
     /// jitter at the nominal rate does not make every other frame look early.
     private static let dueTolerance = 0.75
@@ -81,7 +84,9 @@ final class VisionLandmarker: LandmarkSource, @unchecked Sendable {
         set { lock.withLock { faceCallback = newValue } }
     }
 
-    /// When false no face request runs at all. May be changed while running.
+    /// When false the face is measured only as often as it takes to tell a hand at the face
+    /// from a gesture: at the full rate while a hand is in view, rarely otherwise. May be
+    /// changed while running.
     var faceEnabled: Bool {
         get { lock.withLock { faceWanted } }
         set { lock.withLock { faceWanted = newValue } }
@@ -128,7 +133,9 @@ final class VisionLandmarker: LandmarkSource, @unchecked Sendable {
             busy = true
             counters.framesAnalysed += 1
             lastProcessedTime = time
-            let faceDue = faceWanted && time - lastFaceTime >= Self.dueTolerance / Self.faceRate
+            let handAround = time - lastHandTime < Self.idleDelay
+            let faceRate = faceWanted || handAround ? Self.faceRate : Self.backgroundFaceRate
+            let faceDue = time - lastFaceTime >= Self.dueTolerance / faceRate
             if faceDue { lastFaceTime = time }
             return faceDue
         }

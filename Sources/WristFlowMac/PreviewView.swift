@@ -281,6 +281,7 @@ private struct ReadingPanel: View {
             let trigger = Trigger(pose: pose)
             return "\(trigger.glyph) \(trigger.title)"
         }
+        if gesture.atFace { return "Hand at your face, ignored" }
         return gesture.handVisible ? "Hand seen, no pose" : "No hand"
     }
 

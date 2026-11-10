@@ -43,6 +43,8 @@ public enum PoseClassifier {
     static let thumbCurledClearance = 0.4
     /// Distance between thumb tip and index tip, in palm sizes, under which they touch.
     static let pinchDistance = 0.3
+    /// Smallest turn of the knuckle line against the palm axis (0 edge-on, about 1 flat to the camera) at which a side is called.
+    static let minFacingTurn = 0.3
 
     /// One row per pose. The first row a hand satisfies wins, so a shape that is a special
     /// case of another has to come first.
@@ -80,7 +82,27 @@ public enum PoseClassifier {
             if let wanted = rule.pinched, wanted != pinched { return false }
             return rule.fingers.allSatisfy { states[$0.key] == $0.value }
         }
-        return match?.pose
+        guard match?.pose == .openPalm, hand.handedness != nil else { return match?.pose }
+        // An open hand seen edge-on shows neither side, so it is no pose at all.
+        guard let palmFacing = palmFacesCamera(hand) else { return nil }
+        return palmFacing ? .openPalm : .backOfHand
+    }
+
+    /// Whether the palm, rather than the back of the hand, is towards the camera; nil when the
+    /// hand is edge-on or it is not known which hand it is.
+    ///
+    /// The knuckles run from index to little finger one way round on a palm and the other way
+    /// round on the back, and which is which depends on the hand. Measured on recordings of
+    /// both hands, the turn below is about ±0.7 to ±0.9 for a hand held flat to the camera.
+    public static func palmFacesCamera(_ hand: Hand) -> Bool? {
+        let palm = hand.palmSize
+        guard let handedness = hand.handedness, palm > 0,
+              isTrusted([.wrist, .indexMCP, .middleMCP, .littleMCP], in: hand) else { return nil }
+        let across = hand[.littleMCP] - hand[.indexMCP]
+        let along = hand[.middleMCP] - hand[.wrist]
+        let turn = (across.x * along.y - across.y * along.x) / (palm * palm)
+        guard abs(turn) >= minFacingTurn else { return nil }
+        return (turn > 0) == (handedness == .right)
     }
 
     /// Whether thumb and index tips touch; nil when either tip was not seen well enough.

@@ -549,15 +549,19 @@ private let frameRates = [10.0, 30.0]
 
     // MARK: Recorded gestures
 
-    @Test func recordedWristFlicksAreRead() throws {
-        let fixture = try Fixture(named: "wrist-flick-swipes")
+    @Test(arguments: ["wrist-flick-swipes", "palm-and-back", "hand-at-face"])
+    func recordedGesturesAreRead(name: String) throws {
+        let fixture = try Fixture(named: name)
         var engine = GestureEngine()
         var fired: [Trigger] = []
         for frame in fixture.frames {
-            if case .hands(let hands) = frame, let trigger = engine.ingest(hands) { fired.append(trigger) }
+            switch frame {
+            case .face(let face): engine.ingest(face)
+            case .hands(let hands): if let trigger = engine.ingest(hands) { fired.append(trigger) }
+            }
         }
-        // Everything fired has to be one of the swipes that were made, in the order they were
-        // made; a few may be missed, none may be invented.
+        // Everything fired has to be one of the gestures that were made, in the order they
+        // were made; a few may be missed where the fixture says so, none may be invented.
         var remaining = fixture.expected.triggers[...]
         var invented: [Trigger] = []
         for trigger in fired {
@@ -569,6 +573,91 @@ private let frameRates = [10.0, 30.0]
         }
         #expect(invented.isEmpty)
         #expect(fired.count >= fixture.expected.triggers.count - fixture.expected.mayMiss)
+    }
+
+    // MARK: Palm and back
+
+    @Test(arguments: [false, true])
+    func backOfTheHandIsItsOwnGesture(isLeft: Bool) {
+        var palm = SyntheticHand.openPalm
+        palm.isLeft = isLeft
+        var back = SyntheticHand.backOfHand
+        back.isLeft = isLeft
+        #expect(PoseClassifier.classify(palm.hand()) == .openPalm)
+        #expect(PoseClassifier.classify(back.hand()) == .backOfHand)
+
+        var session = Session()
+        session.hold(palm, for: 0.6)
+        session.hold(back, for: 0.6)
+        session.hold(palm, for: 0.6)
+        #expect(session.triggers == [.palm, .palmBack, .palm])
+    }
+
+    @Test func openHandOfUnknownSideIsAPalm() {
+        var hand = SyntheticHand.backOfHand.hand()
+        hand.handedness = nil
+        #expect(PoseClassifier.classify(hand) == .openPalm)
+    }
+
+    @Test func backOfTheHandDoesNotFireAfterASwipe() {
+        var session = Session()
+        session.lean(-30, for: 0.3)
+        session.flick(from: -30, to: 45)
+        // A flick often leaves the hand turned over.
+        session.lean(45, for: 2, shape: .backOfHand)
+        #expect(session.triggers == [.swipeRight])
+    }
+
+    // MARK: Hand at the face
+
+    /// A face about as large next to `home`'s hand as a real one is next to a hand touching it.
+    private static func face(at center: Point2, time: Double) -> FaceFrame {
+        FaceFrame(time: time, yaw: 0, pitch: 0, roll: 0, center: center, size: palm / 0.8, pupilOffset: nil)
+    }
+
+    @Test(arguments: [SyntheticHand.fist, .openPalm, .ok])
+    func handAtTheFaceIsNotAPose(shape: SyntheticHand) {
+        var session = Session()
+        session.engine.ingest(Self.face(at: away(0, 0.8), time: 0))
+        session.hold(shape, for: 2)
+        #expect(session.triggers.isEmpty)
+        #expect(session.engine.state.atFace)
+        #expect(session.engine.state.pose == nil)
+    }
+
+    @Test func handBesideTheFaceIsRead() {
+        var session = Session()
+        session.engine.ingest(Self.face(at: away(-4, 0.5), time: 0))
+        session.hold(.fist, for: 1)
+        #expect(session.triggers == [.fist])
+        #expect(!session.engine.state.atFace)
+    }
+
+    @Test func handHeldInFrontOfTheFaceIsRead() {
+        var session = Session()
+        // Nearer the camera than the face, so it looks large next to it.
+        var face = Self.face(at: away(0, 0.8), time: 0)
+        face.size = palm / 1.3
+        session.engine.ingest(face)
+        session.hold(.fist, for: 1)
+        #expect(session.triggers == [.fist])
+    }
+
+    @Test func aFaceNotSeenForAWhileIsForgotten() {
+        var session = Session()
+        session.engine.ingest(Self.face(at: away(0, 0.8), time: 0))
+        session.nothing(for: 4)
+        session.hold(.fist, for: 1)
+        #expect(session.triggers == [.fist])
+    }
+
+    @Test func swipeInFrontOfTheFaceStillCounts() {
+        var session = Session()
+        session.engine.ingest(Self.face(at: away(0, 0.8), time: 0))
+        session.lean(-30, for: 0.3)
+        session.flick(from: -30, to: 45)
+        session.lean(45, for: 0.2)
+        #expect(session.triggers == [.swipeRight])
     }
 
     // MARK: Things that must fire nothing

@@ -21,7 +21,7 @@ struct MacActionPerformer: @MainActor ActionPerforming {
 
     func isAvailable(_ kind: ActionKind) -> Bool {
         switch kind {
-        case .wisprToggle:
+        case .wisprToggle, .wisprCancel:
             Self.wisprInstalled
         case .missionControl:
             FileManager.default.fileExists(atPath: Self.missionControlURL.path)
@@ -36,6 +36,8 @@ struct MacActionPerformer: @MainActor ActionPerforming {
             break
         case .wisprToggle:
             Self.toggleWispr()
+        case .wisprCancel:
+            Self.cancelWispr()
         case .spaceLeft:
             Self.post(keyCode: CGKeyCode(kVK_LeftArrow), flags: .maskControl)
         case .spaceRight:
@@ -68,6 +70,48 @@ struct MacActionPerformer: @MainActor ActionPerforming {
         NSWorkspace.shared.open(url, configuration: configuration) { _, error in
             if let error { NSLog("WristFlow: could not reach Wispr Flow: %@", error.localizedDescription) }
         }
+    }
+
+    /// Wispr Flow has no deep link for throwing a dictation away, but it has a "dismiss"
+    /// shortcut (Escape unless the user changed it), so that key is pressed for the user.
+    private static func cancelWispr() {
+        // Only while something is recording: at any other time the key would land in
+        // whatever app is in front and close a dialog or leave full screen there.
+        guard AudioState.anyInputRunning() else { return }
+        wisprStarted = false
+        let key = wisprDismissKey() ?? (CGKeyCode(kVK_Escape), [])
+        post(keyCode: key.keyCode, flags: key.flags)
+    }
+
+    /// The key Wispr Flow's settings give to "dismiss", written there as key codes joined by "+".
+    private static func wisprDismissKey() -> (keyCode: CGKeyCode, flags: CGEventFlags)? {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let file = support.appendingPathComponent("Wispr Flow/config.json")
+        guard let data = try? Data(contentsOf: file),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let prefs = root["prefs"] as? [String: Any],
+              let user = prefs["user"] as? [String: Any],
+              let shortcuts = user["shortcuts"] as? [String: String],
+              let keys = shortcuts.first(where: { $0.value == "dismiss" })?.key else { return nil }
+
+        let modifiers: [Int: CGEventFlags] = [
+            kVK_Command: .maskCommand, kVK_RightCommand: .maskCommand,
+            kVK_Shift: .maskShift, kVK_RightShift: .maskShift,
+            kVK_Option: .maskAlternate, kVK_RightOption: .maskAlternate,
+            kVK_Control: .maskControl, kVK_RightControl: .maskControl,
+            kVK_Function: .maskSecondaryFn,
+        ]
+        var flags: CGEventFlags = []
+        var keyCode: CGKeyCode?
+        for part in keys.split(separator: "+") {
+            guard let code = Int(part) else { return nil }
+            if let flag = modifiers[code] {
+                flags.insert(flag)
+            } else {
+                keyCode = CGKeyCode(code)
+            }
+        }
+        return keyCode.map { ($0, flags) }
     }
 
     /// Launching the system's own launcher app works whatever shortcut the user gave Mission

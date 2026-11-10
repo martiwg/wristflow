@@ -28,7 +28,9 @@ enum Replay {
         var framesWithHand = 0
         var triggers: [Trigger] = []
 
+        var wasAtFace = false
         for frame in frames {
+            if case .face(let face) = frame { engine.ingest(face) }
             guard case .hands(let hands) = frame else { continue }
             handFrames += 1
             if !hands.hands.isEmpty { framesWithHand += 1 }
@@ -38,6 +40,10 @@ enum Replay {
             if state.handVisible != wasVisible {
                 print("\(clock)  hand \(state.handVisible ? "appears" : "leaves")")
                 wasVisible = state.handVisible
+            }
+            if state.atFace != wasAtFace {
+                print("\(clock)  hand \(state.atFace ? "at the face" : "away from the face")")
+                wasAtFace = state.atFace
             }
             if state.pose != lastPose {
                 print("\(clock)  pose \(state.pose?.rawValue ?? "none")")

@@ -1,0 +1,10 @@
+{
+  "description": "Open hand held still: right palm, right back, left palm, left back, about 4 s each.",
+  "triggers": [
+    "palm",
+    "palmBack",
+    "palm",
+    "palmBack"
+  ],
+  "mayMiss": 0
+}

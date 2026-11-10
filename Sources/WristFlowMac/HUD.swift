@@ -7,6 +7,7 @@ extension Trigger {
     var glyph: String {
         switch self {
         case .palm: "✋"
+        case .palmBack: "🤚"
         case .fist: "✊"
         case .ok: "👌"
         case .swipeLeft: "←"

@@ -2,7 +2,10 @@ import Foundation
 
 /// A hand shape that means something when held still.
 public enum Pose: String, Codable, CaseIterable, Sendable {
+    /// Open hand with the palm towards the camera.
     case openPalm
+    /// Open hand with its back towards the camera.
+    case backOfHand
     case fist
     /// Thumb and index tips touching, the other three fingers extended.
     case ok
@@ -11,6 +14,7 @@ public enum Pose: String, Codable, CaseIterable, Sendable {
 /// What the user can do to make WristFlow act.
 public enum Trigger: String, Codable, CaseIterable, Identifiable, Sendable {
     case palm
+    case palmBack
     case fist
     case ok
     case swipeLeft
@@ -22,6 +26,7 @@ public enum Trigger: String, Codable, CaseIterable, Identifiable, Sendable {
     public init(pose: Pose) {
         switch pose {
         case .openPalm: self = .palm
+        case .backOfHand: self = .palmBack
         case .fist: self = .fist
         case .ok: self = .ok
         }
@@ -30,6 +35,7 @@ public enum Trigger: String, Codable, CaseIterable, Identifiable, Sendable {
     public var title: String {
         switch self {
         case .palm: "Open palm"
+        case .palmBack: "Back of the hand"
         case .fist: "Fist"
         case .ok: "OK sign"
         case .swipeLeft: "Swipe left"
@@ -40,7 +46,8 @@ public enum Trigger: String, Codable, CaseIterable, Identifiable, Sendable {
 
     public var hint: String {
         switch self {
-        case .palm: "Show your open hand to the camera and hold it still."
+        case .palm: "Show the palm of your open hand to the camera and hold it still."
+        case .palmBack: "Show the back of your open hand to the camera and hold it still."
         case .fist: "Show a closed fist and hold it still."
         case .ok: "Touch thumb and index finger, other fingers up, and hold."
         case .swipeLeft: "With your hand open, flick it to your left from the wrist."
@@ -55,6 +62,7 @@ public enum Trigger: String, Codable, CaseIterable, Identifiable, Sendable {
 public enum ActionKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case none
     case wisprToggle
+    case wisprCancel
     case spaceLeft
     case spaceRight
     case missionControl
@@ -68,6 +76,7 @@ public enum ActionKind: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .none: "Do nothing"
         case .wisprToggle: "Wispr Flow: start / stop dictation"
+        case .wisprCancel: "Wispr Flow: discard dictation"
         case .spaceLeft: "Move one desktop left"
         case .spaceRight: "Move one desktop right"
         case .missionControl: "Show all windows"
@@ -130,6 +139,7 @@ public struct AppConfig: Codable, Equatable, Sendable {
 
     public static let defaultBindings: [String: ActionBinding] = [
         Trigger.palm.rawValue: ActionBinding(kind: .wisprToggle),
+        Trigger.palmBack.rawValue: ActionBinding(kind: .wisprCancel),
         Trigger.fist.rawValue: ActionBinding(kind: .previousTab),
         Trigger.ok.rawValue: ActionBinding(kind: .nextTab),
         Trigger.swipeLeft.rawValue: ActionBinding(kind: .spaceLeft),
@@ -138,7 +148,8 @@ public struct AppConfig: Codable, Equatable, Sendable {
     ]
 
     public func binding(for trigger: Trigger) -> ActionBinding {
-        bindings[trigger.rawValue] ?? .none
+        // A trigger added after the file was written gets its default until the user changes it.
+        bindings[trigger.rawValue] ?? Self.defaultBindings[trigger.rawValue] ?? .none
     }
 
     public mutating func setBinding(_ binding: ActionBinding, for trigger: Trigger) {

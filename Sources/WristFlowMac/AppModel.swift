@@ -206,7 +206,7 @@ final class AppModel {
     /// The capture session, for the preview window. Nil while the camera is off.
     var captureSession: AVCaptureSession? { landmarker?.session }
 
-    /// Reading the face costs energy, so it only runs when something uses it.
+    /// Reading the face costs energy, so it runs at its full rate only when something uses it.
     private func refreshFaceTracking() {
         let gazeActive = tracker != nil && config.gazeFocusEnabled
         landmarker?.faceEnabled = gazeActive || previewVisible || faceSink != nil
@@ -222,6 +222,7 @@ final class AppModel {
 
     private func handle(_ frame: FaceFrame) {
         guard landmarker != nil else { return }
+        engine.ingest(frame)
         if previewVisible { face = frame }
         if let faceSink {
             faceSink(frame)
