@@ -28,8 +28,16 @@ is a quick flick, so ordinary hand movement does not fire anything. After a swip
 going back the other way is not a swipe, whether it goes at once or a moment later, so you
 can swipe several times in a row. Poses are read from a hand held
 out towards the camera; a hand back by your head (biting a nail, chin on the hand, scratching)
-is not read as a pose. Every gesture can be bound to any action, including a shortcut you
-record, in Settings.
+is not read as a pose. Every gesture can be bound to any action in Settings: the built-in
+ones, a shortcut you record, an app, file or link to open, or one of your Shortcuts to run.
+
+### Combinations
+
+A combination is one pose on each hand, held still at the same time: a fist on one hand and
+one finger on the other, say. There are none to begin with; add them in Settings and choose
+what each does. While both hands are up only the combination fires. A pose that is part of a
+combination and also does something alone takes a moment longer to fire alone, which gives
+the other hand time to come up.
 
 ## Gaze focus
 

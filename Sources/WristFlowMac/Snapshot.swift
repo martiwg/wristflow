@@ -14,7 +14,9 @@ enum Snapshot {
     static func run(model: AppModel, into folder: URL) async {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         write(MenuContentView(model: model), named: "menu", in: folder)
-        write(SettingsView(model: model), named: "settings", in: folder)
+        for tab in SettingsView.Tab.allCases {
+            write(SettingsView(model: model, initialTab: tab), named: "settings-\(tab.rawValue)", in: folder)
+        }
         write(PreviewView(model: model), named: "preview", in: folder)
         NSApp.terminate(nil)
     }

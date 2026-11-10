@@ -37,6 +37,8 @@ final class AppModel {
     // MARK: State the views read
 
     private(set) var config: AppConfig
+    /// What this user taught WristFlow: recorded gestures, combinations, calibration.
+    private(set) var library: GestureLibrary
     private(set) var camera = CameraState.stopped
     private(set) var cameras: [CameraDevice] = []
     private(set) var displays: [DisplayInfo] = []
@@ -59,9 +61,19 @@ final class AppModel {
         didSet { refreshFaceTracking() }
     }
 
-    /// While set, face measurements go here instead of moving focus (gaze calibration).
+    /// While set, face measurements go here instead of moving focus (gaze calibration, and
+    /// the flows that record gestures).
     var faceSink: ((FaceFrame) -> Void)? {
         didSet { refreshFaceTracking() }
+    }
+
+    /// While set, hand frames go here instead of to the gesture engine, so nothing fires
+    /// while the user is being asked to show gestures (recording one, calibrating).
+    var handSink: ((HandFrame) -> Void)? {
+        didSet {
+            engine.reset()
+            gesture = engine.state
+        }
     }
 
     // MARK: Internals
@@ -79,7 +91,16 @@ final class AppModel {
 
     private init() {
         config = Storage.loadConfig()
-        engine.config.holdTime = config.holdTime
+        library = Storage.loadLibrary()
+        configureEngine()
+    }
+
+    /// Hands the engine the user's settings, gestures and calibration.
+    private func configureEngine() {
+        var gestures = GestureConfig()
+        gestures.holdTime = config.holdTime
+        engine.config = library.tuned(gestures)
+        engine.library = library
     }
 
     // MARK: Lifecycle
@@ -214,16 +235,20 @@ final class AppModel {
 
     private func handle(_ frame: HandFrame) {
         guard landmarker != nil else { return }
+        if previewVisible || handSink != nil { hands = frame.hands }
+        if let handSink {
+            handSink(frame)
+            return
+        }
         let trigger = engine.ingest(frame)
         if engine.state != gesture { gesture = engine.state }
-        if previewVisible { hands = frame.hands }
         if let trigger { fire(trigger) }
     }
 
     private func handle(_ frame: FaceFrame) {
         guard landmarker != nil else { return }
         engine.ingest(frame)
-        if previewVisible { face = frame }
+        if previewVisible || handSink != nil { face = frame }
         if let faceSink {
             faceSink(frame)
             return
@@ -239,7 +264,7 @@ final class AppModel {
         let binding = config.binding(for: trigger)
         lastTrigger = TriggerReport(trigger: trigger, binding: binding, date: Date())
         flash()
-        if config.showsHUD { HUD.shared.show(trigger: trigger, binding: binding) }
+        if config.showsHUD { HUD.shared.show(trigger: trigger, binding: binding, library: library) }
         if config.playsSound { NSSound(named: "Tink")?.play() }
         performer.perform(binding)
     }
@@ -267,7 +292,7 @@ final class AppModel {
 
     func setHoldTime(_ value: Double) {
         config.holdTime = value
-        engine.config.holdTime = value
+        configureEngine()
         save()
     }
 
@@ -318,6 +343,74 @@ final class AppModel {
     /// Runs what a trigger is bound to, as if the gesture had been made (Settings' Test button).
     func perform(_ trigger: Trigger) {
         performer.perform(config.binding(for: trigger))
+    }
+
+    // MARK: The user's own gestures
+
+    /// The name to show for a trigger, including the ones the user made.
+    func title(for trigger: Trigger) -> String {
+        library.title(for: trigger)
+    }
+
+    /// Adds a recorded gesture, or replaces the one with the same id (recording it again).
+    func saveGesture(_ gesture: CustomGesture, binding: ActionBinding? = nil) {
+        var changed = library
+        if let index = changed.customGestures.firstIndex(where: { $0.id == gesture.id }) {
+            changed.customGestures[index] = gesture
+        } else {
+            changed.customGestures.append(gesture)
+        }
+        if let binding { config.setBinding(binding, for: gesture.trigger) }
+        update(changed)
+    }
+
+    func renameGesture(id: String, to name: String) {
+        guard let index = library.customGestures.firstIndex(where: { $0.id == id }) else { return }
+        var changed = library
+        changed.customGestures[index].name = name
+        update(changed)
+    }
+
+    /// Deletes a recorded gesture together with the combinations that used it.
+    func deleteGesture(id: String) {
+        var changed = library
+        for trigger in changed.removeGesture(id) { config.removeBinding(for: trigger) }
+        update(changed)
+    }
+
+    /// Adds a combination, or changes the one with the same id. Returns false when the same
+    /// hands already make another combination.
+    @discardableResult
+    func saveCombination(_ combination: Combination) -> Bool {
+        guard library.clash(for: combination) == nil else { return false }
+        var changed = library
+        if let index = changed.combinations.firstIndex(where: { $0.id == combination.id }) {
+            changed.combinations[index] = combination
+        } else {
+            changed.combinations.append(combination)
+        }
+        update(changed)
+        return true
+    }
+
+    func deleteCombination(id: String) {
+        var changed = library
+        for trigger in changed.removeCombination(id) { config.removeBinding(for: trigger) }
+        update(changed)
+    }
+
+    /// Stores what a calibration run measured, or goes back to the factory values with nil.
+    func setCalibration(_ calibration: PersonalCalibration?) {
+        var changed = library
+        changed.calibration = calibration
+        update(changed)
+    }
+
+    private func update(_ changed: GestureLibrary) {
+        library = changed
+        Storage.save(library)
+        save()
+        configureEngine()
     }
 
     // MARK: Gaze
@@ -407,15 +500,21 @@ final class AppModel {
     }
 }
 
-/// Files in `~/Library/Application Support/WristFlow`.
+/// Files in `~/Library/Application Support/WristFlow`: one set per macOS account, so each
+/// person has their own settings, recorded gestures and calibration.
 enum Storage {
     private static var folder: URL {
+        // For development: keeps a trial run away from the real files.
+        if let override = ProcessInfo.processInfo.environment["WRISTFLOW_HOME"], !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("WristFlow", isDirectory: true)
     }
 
     private static var configURL: URL { folder.appendingPathComponent("config.json") }
     private static var gazeURL: URL { folder.appendingPathComponent("gaze.json") }
+    private static var libraryURL: URL { folder.appendingPathComponent("gestures.json") }
 
     static func loadConfig() -> AppConfig {
         load(AppConfig.self, from: configURL) ?? AppConfig()
@@ -423,6 +522,23 @@ enum Storage {
 
     static func save(_ config: AppConfig) {
         write(config, to: configURL)
+    }
+
+    /// The user's recordings are not something to lose quietly: a file that is there but
+    /// cannot be read is set aside under another name before an empty library takes its place.
+    static func loadLibrary() -> GestureLibrary {
+        if let library = load(GestureLibrary.self, from: libraryURL) { return library }
+        if FileManager.default.fileExists(atPath: libraryURL.path) {
+            let stamp = Int(Date().timeIntervalSince1970)
+            let aside = folder.appendingPathComponent("gestures.unreadable-\(stamp).json")
+            try? FileManager.default.moveItem(at: libraryURL, to: aside)
+            NSLog("WristFlow: could not read gestures.json; kept it as %@", aside.lastPathComponent)
+        }
+        return GestureLibrary()
+    }
+
+    static func save(_ library: GestureLibrary) {
+        write(library, to: libraryURL)
     }
 
     static func loadCalibrations() -> [GazeCalibration] {

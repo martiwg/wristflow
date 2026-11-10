@@ -277,12 +277,19 @@ private struct ReadingPanel: View {
 
     // Qualified because SwiftUI has a `GestureState` of its own.
     private func poseText(_ gesture: WristFlowCore.GestureState) -> String {
-        if let pose = gesture.pose {
-            let trigger = Trigger(pose: pose)
-            return "\(trigger.glyph) \(trigger.title)"
+        // Two hands making a combination read as the combination.
+        if let id = gesture.combination {
+            let trigger = Trigger.combination(id)
+            return "\(trigger.glyph) \(model.title(for: trigger))"
         }
-        if gesture.withdrawn { return "Hand by your head, ignored" }
-        return gesture.handVisible ? "Hand seen, no pose" : "No hand"
+        guard let pose = gesture.pose else {
+            if gesture.withdrawn { return "Hand by your head, ignored" }
+            return gesture.handVisible ? "Hand seen, no pose" : "No hand"
+        }
+        let trigger = Trigger(pose: pose)
+        let main = "\(trigger.glyph) \(model.title(for: trigger))"
+        guard let other = gesture.otherPose else { return main }
+        return "\(main)  ·  other hand: \(model.title(for: Trigger(pose: other)))"
     }
 
     @ViewBuilder
@@ -291,7 +298,7 @@ private struct ReadingPanel: View {
             HStack(spacing: 6) {
                 Text("Last gesture:")
                     .foregroundStyle(.secondary)
-                Text("\(report.trigger.glyph) \(report.trigger.title)")
+                Text("\(report.trigger.glyph) \(model.title(for: report.trigger))")
                 Text(report.binding.summary)
                     .foregroundStyle(.secondary)
             }

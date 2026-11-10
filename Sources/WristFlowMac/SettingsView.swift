@@ -1,26 +1,91 @@
 import AppKit
-import Carbon.HIToolbox
 import SwiftUI
 import WristFlowCore
 
+/// The settings window: one tab per thing the user sets up.
 struct SettingsView: View {
     let model: AppModel
-    @State private var testing: Trigger?
+    /// The tab to show first; the snapshot tool renders each one.
+    var initialTab = Tab.gestures
+    @State private var tab: Tab?
+
+    enum Tab: String, CaseIterable, Identifiable {
+        case gestures, combinations, general
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .gestures: "Gestures"
+            case .combinations: "Combinations"
+            case .general: "General"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .gestures: "hand.raised"
+            case .combinations: "hands.clap"
+            case .general: "gearshape"
+            }
+        }
+    }
+
+    var body: some View {
+        TabView(selection: Binding(get: { tab ?? initialTab }, set: { tab = $0 })) {
+            ForEach(Tab.allCases) { tab in
+                content(of: tab)
+                    .tabItem { Label(tab.title, systemImage: tab.symbol) }
+                    .tag(tab)
+            }
+        }
+        .frame(width: 600, height: 640)
+    }
+
+    @ViewBuilder
+    private func content(of tab: Tab) -> some View {
+        switch tab {
+        case .gestures: GesturesTab(model: model)
+        case .combinations: CombinationsTab(model: model)
+        case .general: GeneralTab(model: model)
+        }
+    }
+}
+
+/// The gestures WristFlow knows without being taught, and what each does.
+private struct GesturesTab: View {
+    let model: AppModel
+
+    private static let swipes: [Trigger] = [.swipeLeft, .swipeRight, .swipeUp]
 
     var body: some View {
         Form {
-            Section("Gestures") {
-                ForEach(Trigger.allCases) { trigger in
-                    row(for: trigger)
+            Section("Poses") {
+                ForEach(Trigger.builtIn.filter { !Self.swipes.contains($0) }) { trigger in
+                    TriggerRow(model: model, trigger: trigger)
                 }
             }
-
+            Section("Swipes") {
+                ForEach(Self.swipes) { trigger in
+                    TriggerRow(model: model, trigger: trigger)
+                }
+            }
             Section {
-                Text("Test waits two seconds before firing, so you can switch to the app you want to try it in. Poses must be held still for a moment. A swipe is a quick flick of the open hand from the wrist.")
+                Text("A pose counts when held still for a moment. A swipe is a quick flick of the open hand from the wrist. Test waits two seconds before firing, so you can switch to the app you want to try it in.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+        .formStyle(.grouped)
+    }
+}
 
+/// Detection, gaze, permissions and the rest.
+private struct GeneralTab: View {
+    let model: AppModel
+
+    var body: some View {
+        Form {
             Section("Detection") {
                 LabeledContent("Hold a pose for") {
                     SecondsSlider(value: model.config.holdTime, range: 0.2...1.0) { model.setHoldTime($0) }
@@ -60,7 +125,7 @@ struct SettingsView: View {
                     }
                 }
                 if !model.isAvailable(.wisprToggle) {
-                    Text("Wispr Flow is not installed. Its action is left out of the lists above, and a gesture already set to it does nothing.")
+                    Text("Wispr Flow is not installed. Its actions are left out of the lists, and a gesture already set to one does nothing.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -71,50 +136,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 560, height: 640)
-    }
-
-    // MARK: Gestures
-
-    private func row(for trigger: Trigger) -> some View {
-        let binding = model.config.binding(for: trigger)
-        // The selected kind stays in the list even when it cannot run here (Wispr Flow not
-        // installed), otherwise the picker would show nothing for it.
-        let kinds = ActionKind.allCases.filter { model.isAvailable($0) || $0 == binding.kind }
-        return HStack {
-            HStack(spacing: 6) {
-                Text(trigger.glyph)
-                    .frame(width: 22)
-                    .accessibilityHidden(true)
-                Text(trigger.title)
-            }
-            .frame(width: 112, alignment: .leading)
-            .help(trigger.hint)
-            Picker(trigger.title, selection: Binding(
-                get: { binding.kind },
-                set: { model.setBinding(ActionBinding(kind: $0, combo: binding.combo), for: trigger) }
-            )) {
-                ForEach(kinds) { kind in
-                    Text(kind.title).tag(kind)
-                }
-            }
-            .labelsHidden()
-            if binding.kind == .shortcut {
-                ShortcutRecorder(combo: binding.combo) { combo in
-                    model.setBinding(ActionBinding(kind: .shortcut, combo: combo), for: trigger)
-                }
-            }
-            Spacer(minLength: 4)
-            Button(testing == trigger ? "Firing…" : "Test") {
-                testing = trigger
-                Task {
-                    try? await Task.sleep(for: .seconds(2))
-                    model.perform(trigger)
-                    testing = nil
-                }
-            }
-            .disabled(testing != nil || binding.kind == .none)
-        }
     }
 
     // MARK: Gaze
@@ -190,64 +211,5 @@ private struct SecondsSlider: View {
                 .monospacedDigit()
                 .frame(width: 48, alignment: .trailing)
         }
-    }
-}
-
-/// Button that captures the next key combination pressed.
-private struct ShortcutRecorder: View {
-    let combo: KeyCombo?
-    let onRecord: (KeyCombo) -> Void
-    @State private var recording = false
-    @State private var monitor: Any?
-
-    var body: some View {
-        Button(recording ? "Press keys…" : (combo?.label ?? "Record…")) {
-            recording ? stop() : start()
-        }
-        .onDisappear { stop() }
-    }
-
-    private func start() {
-        recording = true
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            if event.keyCode == UInt16(kVK_Escape) {
-                stop()
-                return nil
-            }
-            onRecord(Self.combo(from: event))
-            stop()
-            return nil
-        }
-    }
-
-    private func stop() {
-        recording = false
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
-    }
-
-    /// Modifiers are stored as `CGEventFlags` bits because that is what posting the key press
-    /// later takes.
-    private static func combo(from event: NSEvent) -> KeyCombo {
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        var flags = CGEventFlags()
-        var label = ""
-        if modifiers.contains(.control) { flags.insert(.maskControl); label += "⌃" }
-        if modifiers.contains(.option) { flags.insert(.maskAlternate); label += "⌥" }
-        if modifiers.contains(.shift) { flags.insert(.maskShift); label += "⇧" }
-        if modifiers.contains(.command) { flags.insert(.maskCommand); label += "⌘" }
-        label += keyName(event)
-        return KeyCombo(keyCode: event.keyCode, modifiers: flags.rawValue, label: label)
-    }
-
-    private static func keyName(_ event: NSEvent) -> String {
-        let named: [Int: String] = [
-            kVK_LeftArrow: "←", kVK_RightArrow: "→", kVK_UpArrow: "↑", kVK_DownArrow: "↓",
-            kVK_Space: "Space", kVK_Tab: "⇥", kVK_Return: "↩", kVK_Delete: "⌫",
-            kVK_F1: "F1", kVK_F2: "F2", kVK_F3: "F3", kVK_F4: "F4", kVK_F5: "F5", kVK_F6: "F6",
-            kVK_F7: "F7", kVK_F8: "F8", kVK_F9: "F9", kVK_F10: "F10", kVK_F11: "F11", kVK_F12: "F12",
-        ]
-        if let name = named[Int(event.keyCode)] { return name }
-        return event.charactersIgnoringModifiers?.uppercased() ?? "Key \(event.keyCode)"
     }
 }

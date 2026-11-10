@@ -45,6 +45,12 @@ public struct GestureConfig: Codable, Equatable, Sendable {
     public var withdrawRatio = 0.9
     /// Seconds the last seen face is remembered; a hand at the face can hide it from the detector.
     public var faceMemory = 3.0
+    /// Extra seconds a pose that is also half of a combination has to be held before it fires
+    /// on its own, so the other hand has time to come up.
+    public var comboGrace = 0.25
+    /// Seconds after a second hand comes into view during which a pose that is half of a
+    /// combination does not fire on its own: the second hand is still getting into its pose.
+    public var comboSettle = 0.6
 
     public init() {}
 
@@ -76,6 +82,8 @@ public struct GestureConfig: Codable, Equatable, Sendable {
         presentRatio = try value(.presentRatio, defaults.presentRatio)
         withdrawRatio = try value(.withdrawRatio, defaults.withdrawRatio)
         faceMemory = try value(.faceMemory, defaults.faceMemory)
+        comboGrace = try value(.comboGrace, defaults.comboGrace)
+        comboSettle = try value(.comboSettle, defaults.comboSettle)
     }
 }
 
@@ -92,19 +100,33 @@ public struct GestureState: Equatable, Sendable {
     /// The hand is back by the head rather than held out towards the camera, so its shape is
     /// not read as a pose.
     public var withdrawn: Bool
+    /// A second usable hand is in view. Only its pose is read, for combinations.
+    public var otherHandVisible: Bool
+    /// Pose read on the second hand in the latest frame.
+    public var otherPose: Pose?
+    /// Id of the combination the two hands are showing; `holdProgress` then counts towards it.
+    public var combination: String?
 
     public init(
-        handVisible: Bool = false, pose: Pose? = nil, holdProgress: Double = 0, armedForSwipe: Bool = false, withdrawn: Bool = false
+        handVisible: Bool = false, pose: Pose? = nil, holdProgress: Double = 0, armedForSwipe: Bool = false,
+        withdrawn: Bool = false, otherHandVisible: Bool = false, otherPose: Pose? = nil, combination: String? = nil
     ) {
         self.handVisible = handVisible
         self.pose = pose
         self.holdProgress = holdProgress
         self.armedForSwipe = armedForSwipe
         self.withdrawn = withdrawn
+        self.otherHandVisible = otherHandVisible
+        self.otherPose = otherPose
+        self.combination = combination
     }
 }
 
-/// Turns a stream of hand frames into triggers: poses held still, and swipes of the open hand.
+/// Turns a stream of hand frames into triggers: poses held still, swipes of the open hand,
+/// and two hands each holding a pose at the same time.
+///
+/// One hand is followed for gestures of its own. A second hand in view is followed only for
+/// its pose, which matters when the two together make a combination the user set up.
 ///
 /// A swipe is a flick: the fingertips sweeping sideways or upwards in about a tenth of a second
 /// while the wrist stays roughly where it is. That is how people swipe at a screen in practice,
@@ -113,10 +135,14 @@ public struct GestureState: Equatable, Sendable {
 /// All timing comes from `HandFrame.time`, so the frame rate may vary and frames may be missing.
 public struct GestureEngine: Sendable {
     public var config: GestureConfig
+    /// What the user taught: recorded gestures, combinations and their calibration.
+    public var library = GestureLibrary()
     public private(set) var state = GestureState()
 
     private var track: Track?
-    /// Where the usable hands that are not being followed were in the latest frame.
+    /// The other hand in view, whose pose can complete a combination.
+    private var second: Track?
+    /// Where the usable hands other than the main one were in the latest frame.
     private var bystanders: [Point2] = []
     /// The face as last reported, to tell a hand back by the head from one held out in a pose.
     private var face: FaceFrame?
@@ -128,6 +154,7 @@ public struct GestureEngine: Sendable {
     /// Forgets the hand being followed, as if the camera had just started.
     public mutating func reset() {
         track = nil
+        second = nil
         bystanders = []
         face = nil
         state = GestureState()
@@ -156,38 +183,114 @@ public struct GestureEngine: Sendable {
         bystanders = usable.indices.filter { $0 != seen }.map { usable[$0].palmCenter }
 
         guard var followed = track else {
+            second = nil
             state = GestureState()
             return nil
         }
+        let otherReading = followSecond(among: usable, apart: seen, at: now)
         // A dropout short enough to keep the appearance leaves everything as it was.
         guard let seen else { return nil }
 
-        let hand = usable[seen]
+        let reading = observe(&followed, as: usable[seen], at: now)
+        let pairing = pairing(of: followed, with: second, at: now)
+
+        var trigger: Trigger?
+        if let pairing, reading == followed.hold?.pose, otherReading == second?.hold?.pose,
+           // Holding one hand and showing the other again makes the combination again.
+           !(followed.hold?.combined == true && second?.hold?.combined == true),
+           reached(now - pairing.since, config.holdTime) {
+            followed.completeCombination()
+            second?.completeCombination()
+            trigger = pairing.combination.trigger
+        }
+        // A pose that is also half of a combination gives the other hand time to come up.
+        let combined = followed.hold.map { library.isCombined($0.pose) } ?? false
+        let needed = config.holdTime + (combined ? config.comboGrace : 0)
+        if trigger == nil, !(combined && (pairing != nil || isSecondArriving(at: now))) {
+            trigger = followed.completeHold(reading, at: now, holdTime: needed).map(Trigger.init(pose:))
+        }
+        let swipe = followed.followSwipe(at: now, config: config)
+        trigger = trigger ?? swipe
+
+        var progress = followed.holdProgress(at: now, holdTime: needed)
+        if let pairing {
+            let done = (followed.hold?.combined == true && second?.hold?.combined == true) || config.holdTime <= 0
+            progress = done ? 1 : min(1, max(0, (now - pairing.since) / config.holdTime))
+        }
+        state = GestureState(
+            handVisible: true,
+            pose: reading,
+            holdProgress: progress,
+            armedForSwipe: followed.canSwipe(at: now, config: config),
+            withdrawn: followed.withdrawn,
+            otherHandVisible: second?.lastSeen == now,
+            otherPose: otherReading,
+            combination: pairing?.combination.id
+        )
+        track = followed
+        return trigger
+    }
+
+    /// Takes in one frame of a followed hand and returns the pose read on it.
+    private func observe(_ followed: inout Track, as hand: Hand, at now: Double) -> Pose? {
         let elapsed = now - followed.lastSeen
         followed.observe(hand, at: now, config: config)
         // A hand back by the head is biting a nail, propping up a chin or scratching, and
         // takes the shape of a fist or an open palm while doing it. Swipes are left alone:
         // nothing done there looks like a flick.
         followed.withdrawn = isWithdrawn(palmSize: followed.palmSize, was: followed.withdrawn, at: now)
-        let reading = followed.withdrawn ? nil : PoseClassifier.classify(hand)
+        let reading = followed.withdrawn ? nil : read(hand)
         let rested = followed.restDuration(radius: config.restRadius * followed.palmSize)
-
         followed.followPose(
             reading, trusted: reached(rested, config.restTime), at: now, elapsed: elapsed, config: config
         )
-        var trigger = followed.completeHold(reading, at: now, config: config).map(Trigger.init(pose:))
-        let swipe = followed.followSwipe(at: now, config: config)
-        trigger = trigger ?? swipe
+        return reading
+    }
 
-        state = GestureState(
-            handVisible: true,
-            pose: reading,
-            holdProgress: followed.holdProgress(at: now, holdTime: config.holdTime),
-            armedForSwipe: followed.canSwipe(at: now, config: config),
-            withdrawn: followed.withdrawn
-        )
-        track = followed
-        return trigger
+    /// Keeps up with the hand that is not the main one, and returns the pose read on it.
+    private mutating func followSecond(among hands: [Hand], apart main: Int?, at now: Double) -> Pose? {
+        let others = hands.indices.filter { $0 != main }
+        var seen: Int?
+        if let other = second {
+            let reach = max(0.5, config.maxHandSpeed * (now - other.lastSeen)) * other.palmSize
+            seen = others
+                .filter { hands[$0].palmCenter.distance(to: other.center) <= reach }
+                .min { hands[$0].palmCenter.distance(to: other.center) < hands[$1].palmCenter.distance(to: other.center) }
+            if seen == nil, now - other.lastSeen > config.glitchTolerance { second = nil }
+        }
+        if second == nil, let largest = others.max(by: { hands[$0].palmSize < hands[$1].palmSize }) {
+            second = Track(hand: hands[largest], time: now)
+            seen = largest
+        }
+        guard let seen, var other = second else { return nil }
+        let reading = observe(&other, as: hands[seen], at: now)
+        second = other
+        return reading
+    }
+
+    /// The combination the two hands are holding, and since when both have held their part
+    /// of it still.
+    private func pairing(of main: Track, with other: Track?, at now: Double) -> (combination: Combination, since: Double)? {
+        guard !library.combinations.isEmpty, let other, other.lastSeen == now,
+              let mine = main.hold, let theirs = other.hold else { return nil }
+        // The detector says which hand is which. When it gives both the same name, or none,
+        // their places do: the user's left hand is the one on their left.
+        let mainIsLeft: Bool
+        if let side = main.handedness, let otherSide = other.handedness, side != otherSide {
+            mainIsLeft = side == .left
+        } else {
+            mainIsLeft = main.center.x < other.center.x
+        }
+        let left = mainIsLeft ? mine.pose : theirs.pose
+        let right = mainIsLeft ? theirs.pose : mine.pose
+        guard let combination = library.combination(left: left, right: right) else { return nil }
+        return (combination, max(mine.since, theirs.since))
+    }
+
+    /// Whether a second hand has only just come into view and may still be getting into a pose.
+    private func isSecondArriving(at now: Double) -> Bool {
+        guard let other = second, other.lastSeen == now, !other.withdrawn else { return false }
+        return now - other.appeared < config.comboSettle
     }
 
     /// Whether the hand is back at about the face's distance from the camera instead of held
@@ -204,6 +307,12 @@ public struct GestureEngine: Sendable {
         if ratio >= config.presentRatio { return false }
         if ratio <= config.withdrawRatio { return true }
         return was
+    }
+
+    /// The pose a hand shows: a shape the user recorded when it looks like one, otherwise
+    /// one of the built-in poses.
+    private func read(_ hand: Hand) -> Pose? {
+        PoseClassifier.classify(hand, profile: library.profile)
     }
 
     private func isUsable(_ hand: Hand) -> Bool {
@@ -259,8 +368,10 @@ private struct Track: Sendable {
         var high: Point2
         /// Seconds since `since` on which the reading was something else.
         var doubted = 0.0
-        /// Its trigger has been emitted.
+        /// Its trigger has been emitted, or it was used up as half of a combination.
         var fired = false
+        /// It was half of a combination that fired.
+        var combined = false
     }
 
     /// Where the hand's ends were on one frame; a swipe is read from how these move.
@@ -274,6 +385,8 @@ private struct Track: Sendable {
     var center: Point2
     var palmSize: Double
     var lastSeen: Double
+    /// Which of the user's hands this is, as last reported by the detector.
+    var handedness: Handedness?
     /// Recent palm centres, oldest first, reaching back just past the longest rest that is asked for.
     var path: [Sample] = []
     var hold: Hold?
@@ -308,6 +421,7 @@ private struct Track: Sendable {
         palmSize = hand.palmSize
         lastSeen = time
         appeared = time
+        handedness = hand.handedness
     }
 
     mutating func observe(_ hand: Hand, at now: Double, config: GestureConfig) {
@@ -315,6 +429,7 @@ private struct Track: Sendable {
         palmSize += (hand.palmSize - palmSize) * blend
         center = hand.palmCenter
         lastSeen = now
+        handedness = hand.handedness ?? handedness
         path.append(Sample(time: now, center: center))
         // Keep one sample at or beyond the horizon, so a rest of exactly that length can be seen.
         let horizon = now - config.restTime
@@ -394,11 +509,18 @@ private struct Track: Sendable {
         if wandered || current.doubted > config.glitchTolerance + 1e-9 { restartHold(at: now) }
     }
 
+    /// Marks the pose being held as used up by a combination, so it does not also fire alone.
+    mutating func completeCombination() {
+        hold?.fired = true
+        hold?.combined = true
+        palmSpent = false
+    }
+
     /// The pose whose hold completes on this frame, if any.
-    mutating func completeHold(_ reading: Pose?, at now: Double, config: GestureConfig) -> Pose? {
+    mutating func completeHold(_ reading: Pose?, at now: Double, holdTime: Double) -> Pose? {
         guard var current = hold, !current.fired, reading == current.pose,
               !(current.pose.isOpenHand && palmSpent),
-              reached(now - current.since, config.holdTime) else { return nil }
+              reached(now - current.since, holdTime) else { return nil }
         current.fired = true
         hold = current
         // Deliberately showing another pose ends the swiping; the palm means palm again.

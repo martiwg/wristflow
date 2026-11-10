@@ -53,7 +53,7 @@ public enum Handedness: String, Codable, Sendable {
 }
 
 /// One detected hand.
-public struct Hand: Codable, Sendable {
+public struct Hand: Codable, Hashable, Sendable {
     /// Which of the user's hands this is, when the detector can tell.
     public var handedness: Handedness?
     /// 21 points indexed by `Joint.rawValue`.

@@ -10,6 +10,49 @@ import WristFlowCore
 struct MacActionPerformer: @MainActor ActionPerforming {
     static let wisprBundleID = "com.electron.wispr-flow"
     private static let missionControlURL = URL(fileURLWithPath: "/System/Applications/Mission Control.app")
+    /// The command line tool that comes with the Shortcuts app.
+    private static let shortcutsTool = "/usr/bin/shortcuts"
+
+    /// Opens an app, a file or a link. Anything with a scheme is a link; the rest is a path.
+    private static func open(_ target: String?) {
+        guard let target = target?.trimmingCharacters(in: .whitespacesAndNewlines), !target.isEmpty else { return }
+        if let url = URL(string: target), let scheme = url.scheme, !scheme.isEmpty, !target.hasPrefix("/") {
+            NSWorkspace.shared.open(url)
+        } else {
+            NSWorkspace.shared.open(URL(fileURLWithPath: (target as NSString).expandingTildeInPath))
+        }
+    }
+
+    /// Starts one of the user's Shortcuts and does not wait for it.
+    private static func runShortcut(named name: String?) {
+        guard let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: shortcutsTool)
+        process.arguments = ["run", name]
+        do {
+            try process.run()
+        } catch {
+            NSLog("WristFlow: could not run the Shortcut %@: %@", name, error.localizedDescription)
+        }
+    }
+
+    /// The names of the user's Shortcuts, for choosing one. Empty when there are none or the
+    /// tool is missing.
+    nonisolated static func shortcutNames() async -> [String] {
+        await Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
+            process.arguments = ["list"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = Pipe()
+            guard (try? process.run()) != nil else { return [] }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let names = String(decoding: data, as: UTF8.self).split(separator: "\n").map(String.init)
+            return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        }.value
+    }
 
     /// Whether the last thing WristFlow told Wispr Flow was to start. Static because the
     /// performer is a value that gets copied, while Wispr Flow has a single dictation state.
@@ -25,7 +68,9 @@ struct MacActionPerformer: @MainActor ActionPerforming {
             Self.wisprInstalled
         case .missionControl:
             FileManager.default.fileExists(atPath: Self.missionControlURL.path)
-        case .none, .spaceLeft, .spaceRight, .previousTab, .nextTab, .pressReturn, .shortcut:
+        case .runShortcut:
+            FileManager.default.isExecutableFile(atPath: Self.shortcutsTool)
+        case .none, .spaceLeft, .spaceRight, .previousTab, .nextTab, .pressReturn, .shortcut, .open:
             true
         }
     }
@@ -54,6 +99,10 @@ struct MacActionPerformer: @MainActor ActionPerforming {
             if let combo = binding.combo {
                 Self.post(keyCode: CGKeyCode(combo.keyCode), flags: CGEventFlags(rawValue: combo.modifiers))
             }
+        case .open:
+            Self.open(binding.target)
+        case .runShortcut:
+            Self.runShortcut(named: binding.target)
         }
     }
 

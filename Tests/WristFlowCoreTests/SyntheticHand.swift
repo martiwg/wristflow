@@ -53,6 +53,7 @@ struct SyntheticHand {
         case .thumbsUp: thumbsUp
         case .fist: fist
         case .ok: ok
+        case .custom: preconditionFailure("A recorded shape has no synthetic hand")
         }
     }
 

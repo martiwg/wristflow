@@ -18,6 +18,8 @@ extension Trigger {
         case .swipeLeft: "←"
         case .swipeRight: "→"
         case .swipeUp: "↑"
+        case .custom: "✦"
+        case .combination: "✦"
         }
     }
 }
@@ -31,8 +33,8 @@ final class HUD {
     private var panel: NSPanel?
     private var hiding: Task<Void, Never>?
 
-    func show(trigger: Trigger, binding: ActionBinding) {
-        let content = NSHostingView(rootView: HUDView(glyph: trigger.glyph, text: binding.summary))
+    func show(trigger: Trigger, binding: ActionBinding, library: GestureLibrary) {
+        let content = NSHostingView(rootView: HUDView(trigger: trigger, library: library, text: binding.summary))
         content.frame = CGRect(origin: .zero, size: content.fittingSize)
 
         let panel = panel ?? makePanel()
@@ -44,8 +46,9 @@ final class HUD {
         let pointer = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main
         if let visible = screen?.visibleFrame {
-            // Just above the Dock, out of the way of what the user is looking at.
-            panel.setFrameOrigin(CGPoint(x: visible.midX - content.frame.width / 2, y: visible.minY + 24))
+            // Low on the screen, out of the way of what the user is looking at, but clear of
+            // the dictation pill Wispr Flow shows right above the Dock.
+            panel.setFrameOrigin(CGPoint(x: visible.midX - content.frame.width / 2, y: visible.minY + 48))
         }
 
         panel.alphaValue = 1
@@ -81,12 +84,13 @@ final class HUD {
 }
 
 private struct HUDView: View {
-    let glyph: String
+    let trigger: Trigger
+    let library: GestureLibrary
     let text: String
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(glyph).font(.system(size: 18, weight: .semibold))
+            GestureIcon(trigger: trigger, library: library, size: 18)
             Text(text).font(.system(size: 13, weight: .medium))
         }
         .padding(.horizontal, 14)

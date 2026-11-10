@@ -1,9 +1,10 @@
 import Foundation
 import WristFlowCore
 
-/// `WristFlow --replay <file> [--set name=value ...]`: runs a landmark recording through the
-/// gesture engine and prints what it reads and fires. `--set` overrides a `GestureConfig`
-/// field for the run. A development tool for tuning thresholds on real gestures.
+/// `WristFlow --replay <file> [--library <file>] [--set name=value ...]`: runs a landmark
+/// recording through the gesture engine and prints what it reads and fires. `--library` loads
+/// recorded gestures, combinations and a calibration (a `gestures.json`); `--set` overrides a
+/// `GestureConfig` field for the run. A development tool for tuning thresholds on real gestures.
 enum Replay {
     /// The default configuration with every `--set name=value` applied.
     private static func config(from arguments: [String]) -> GestureConfig {
@@ -21,10 +22,24 @@ enum Replay {
         return config
     }
 
+    /// The library named by `--library`, or an empty one.
+    private static func library(from arguments: [String]) -> GestureLibrary? {
+        guard let flag = arguments.firstIndex(of: "--library") else { return GestureLibrary() }
+        guard arguments.count > flag + 1 else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: arguments[flag + 1])) else { return nil }
+        return try? decoder.decode(GestureLibrary.self, from: data)
+    }
+
     static func run(arguments: [String]) -> Int32 {
         guard let flag = arguments.firstIndex(of: "--replay"), arguments.count > flag + 1 else {
-            print("usage: WristFlow --replay <file>")
+            print("usage: WristFlow --replay <file> [--library <file>] [--set name=value ...]")
             return 2
+        }
+        guard let library = library(from: arguments) else {
+            print("Could not read the library.")
+            return 1
         }
         let frames: [RecordedFrame]
         do {
@@ -38,8 +53,15 @@ enum Replay {
             return 1
         }
 
-        var engine = GestureEngine(config: config(from: arguments))
+        // Settings given on the command line win over the ones the calibration measured.
+        var engine = GestureEngine(config: library.tuned(GestureConfig()))
+        engine.library = library
+        if arguments.contains("--set") { engine.config = config(from: arguments) }
+        func name(_ pose: Pose?) -> String {
+            pose.map { library.title(for: Trigger(pose: $0)) } ?? "none"
+        }
         var lastPose: Pose?
+        var lastOtherPose: Pose?
         var wasVisible = false
         var handFrames = 0
         var framesWithHand = 0
@@ -63,11 +85,15 @@ enum Replay {
                 wasWithdrawn = state.withdrawn
             }
             if state.pose != lastPose {
-                print("\(clock)  pose \(state.pose?.rawValue ?? "none")")
+                print("\(clock)  pose \(name(state.pose))")
                 lastPose = state.pose
             }
+            if state.otherPose != lastOtherPose {
+                print("\(clock)  other hand \(name(state.otherPose))")
+                lastOtherPose = state.otherPose
+            }
             if let trigger {
-                print("\(clock)  >>> \(trigger.rawValue)")
+                print("\(clock)  >>> \(library.title(for: trigger))  [\(trigger.key)]")
                 triggers.append(trigger)
             }
         }
@@ -75,7 +101,7 @@ enum Replay {
         let duration = (frames.last?.time ?? start) - start
         print("")
         print("\(handFrames) frames in \(String(format: "%.1f", duration)) s, a hand in \(framesWithHand) of them")
-        print("triggers: \(triggers.isEmpty ? "none" : triggers.map(\.rawValue).joined(separator: ", "))")
+        print("triggers: \(triggers.isEmpty ? "none" : triggers.map(\.key).joined(separator: ", "))")
         return 0
     }
 }

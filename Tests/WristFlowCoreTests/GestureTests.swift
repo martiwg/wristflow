@@ -38,7 +38,7 @@ private func misread(_ shape: SyntheticHand, as pose: Pose?) -> [String] {
 
 @Suite struct PoseClassifierTests {
     // A thumbs up is the one pose that depends on which way it points; it has its own test.
-    @Test(arguments: Pose.allCases.filter { $0 != .thumbsUp })
+    @Test(arguments: Pose.builtIn.filter { $0 != .thumbsUp })
     func poseIsReadAtAnySizeTiltAndHand(pose: Pose) {
         let wrong = misread(.shape(for: pose), as: pose)
         #expect(wrong.isEmpty, "\(wrong)")
@@ -276,7 +276,7 @@ private let frameRates = [10.0, 30.0]
 
     @Test(arguments: frameRates)
     func holdFiresOnceAtAboutHoldTimeAndNotBefore(fps: Double) {
-        for pose in Pose.allCases {
+        for pose in Pose.builtIn {
             var session = Session(fps: fps)
             session.hold(.shape(for: pose), for: 2)
             #expect(session.triggers == [Trigger(pose: pose)])
@@ -910,5 +910,137 @@ private let frameRates = [10.0, 30.0]
 
         let roundTrip = try JSONDecoder().decode(GestureConfig.self, from: JSONEncoder().encode(expected))
         #expect(roundTrip == expected)
+    }
+}
+
+// MARK: - Combinations
+
+/// Where the user's two hands are in the scenes below: the left one on their left.
+private let leftSpot = Point2(x: 0.5, y: 0.5)
+private let rightSpot = Point2(x: 1.1, y: 0.5)
+
+private func leftHand(_ shape: SyntheticHand) -> SyntheticHand {
+    var hand = shape.at(leftSpot)
+    hand.isLeft = true
+    return hand
+}
+
+/// The right hand is drawn a little larger, which makes it the one followed for its own gestures.
+private func rightHand(_ shape: SyntheticHand) -> SyntheticHand {
+    shape.at(rightSpot).scaled(0.17)
+}
+
+@Suite struct CombinationTests {
+    private let fistAndOne = Combination(id: "fist-one", left: .fist, right: .oneFinger, eitherWay: false)
+
+    private func session(fps: Double = 30, _ combinations: [Combination]) -> Session {
+        var session = Session(fps: fps)
+        session.engine.library.combinations = combinations
+        return session
+    }
+
+    @Test(arguments: frameRates)
+    func twoHandsHoldingTheirPosesFireTheCombinationOnce(fps: Double) {
+        var session = session(fps: fps, [fistAndOne])
+        session.run(2) { _ in [leftHand(.fist), rightHand(.pointing)] }
+        #expect(session.triggers == [.combination("fist-one")])
+        let time = session.fired.first?.time ?? 0
+        #expect(time >= 0.4 - 1e-9 && time <= 0.4 + 2 / fps + 0.12)
+    }
+
+    @Test func handsTheOtherWayRoundCountOnlyWhenAllowed() {
+        var strict = session([fistAndOne])
+        strict.run(2) { _ in [leftHand(.pointing), rightHand(.fist)] }
+        // The fist is half of a combination but this is not it, so it fires as a fist.
+        #expect(strict.triggers == [.fist])
+
+        var lenient = session([Combination(id: "either", left: .fist, right: .oneFinger, eitherWay: true)])
+        lenient.run(2) { _ in [leftHand(.pointing), rightHand(.fist)] }
+        #expect(lenient.triggers == [.combination("either")])
+    }
+
+    @Test func handsAreToldApartByPlaceWhenTheDetectorNamesThemTheSame() {
+        var session = session([fistAndOne])
+        session.run(2) { _ in
+            var left = leftHand(.fist)
+            left.isLeft = false
+            return [left, rightHand(.pointing)]
+        }
+        #expect(session.triggers == [.combination("fist-one")])
+    }
+
+    @Test func thePoseOfACombinationStillFiresAloneAfterALittleLonger() {
+        var session = session([fistAndOne])
+        session.run(2) { _ in [rightHand(.pointing)] }
+        #expect(session.triggers == [.oneFinger])
+        let time = session.fired.first?.time ?? 0
+        #expect(time >= 0.65 - 1e-9 && time <= 0.65 + 0.2)
+    }
+
+    @Test func posesOutsideEveryCombinationFireAsBefore() {
+        var session = session([fistAndOne])
+        session.run(2) { _ in [rightHand(.openPalm)] }
+        #expect(session.triggers == [.palm])
+        let time = session.fired.first?.time ?? 0
+        #expect(time <= 0.4 + 0.2)
+    }
+
+    @Test(arguments: [0.2, 0.4, 0.6])
+    func theOtherHandMayComeUpAMomentLater(delay: Double) {
+        var session = session([fistAndOne])
+        session.run(delay) { _ in [rightHand(.pointing)] }
+        session.run(2) { _ in [leftHand(.fist), rightHand(.pointing)] }
+        #expect(session.triggers == [.combination("fist-one")])
+    }
+
+    @Test func aHandThatComesUpAfterThePoseFiredStillMakesTheCombination() {
+        var session = session([fistAndOne])
+        session.run(1.2) { _ in [rightHand(.pointing)] }
+        session.run(2) { _ in [leftHand(.fist), rightHand(.pointing)] }
+        #expect(session.triggers == [.oneFinger, .combination("fist-one")])
+    }
+
+    @Test func aSecondHandShowingNothingOnlyDelaysThePose() {
+        var session = session([fistAndOne])
+        session.run(2) { _ in [leftHand(.halfClosed), rightHand(.pointing)] }
+        #expect(session.triggers == [.oneFinger])
+        #expect((session.fired.first?.time ?? 0) <= 0.65 + 0.2)
+    }
+
+    @Test func showingOneHandAgainMakesTheCombinationAgain() {
+        var session = session([fistAndOne])
+        session.run(1) { _ in [leftHand(.fist), rightHand(.pointing)] }
+        session.run(0.6) { _ in [rightHand(.pointing)] }
+        session.run(1) { _ in [leftHand(.fist), rightHand(.pointing)] }
+        #expect(session.triggers == [.combination("fist-one"), .combination("fist-one")])
+    }
+
+    @Test func bothHandsMayShowTheSamePose() {
+        var session = session([Combination(id: "palms", left: .palm, right: .palm)])
+        session.run(2) { _ in [leftHand(.openPalm), rightHand(.openPalm)] }
+        #expect(session.triggers == [.combination("palms")])
+    }
+
+    @Test func aHandThatKeepsMovingDoesNotCompleteTheCombination() {
+        var session = session([fistAndOne])
+        session.run(1.5) { elapsed in
+            [leftHand(.fist).at(Point2(x: leftSpot.x, y: 0.3 + 0.3 * elapsed)), rightHand(.pointing)]
+        }
+        #expect(!session.triggers.contains(.combination("fist-one")))
+    }
+
+    @Test func aHandBackByTheHeadIsNoHalfOfACombination() {
+        var session = session([fistAndOne])
+        // A face as tall as 1.4 palms of the left hand: that hand is back at the face.
+        session.engine.ingest(FaceFrame(time: 0, yaw: 0, pitch: 0, roll: 0, center: Point2(x: 0.8, y: 0.7), size: 0.15 * 1.4, pupilOffset: nil))
+        session.run(2) { _ in [leftHand(.fist), rightHand(.pointing).scaled(0.25)] }
+        #expect(session.triggers == [.oneFinger])
+    }
+
+    @Test func withoutCombinationsASecondHandChangesNothing() {
+        var session = Session()
+        session.run(2) { _ in [leftHand(.fist), rightHand(.pointing)] }
+        #expect(session.triggers == [.oneFinger])
+        #expect((session.fired.first?.time ?? 0) <= 0.4 + 0.1)
     }
 }
