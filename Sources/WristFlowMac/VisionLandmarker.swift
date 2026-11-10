@@ -46,6 +46,19 @@ final class VisionLandmarker: LandmarkSource, @unchecked Sendable {
     private var lastFaceTime = -Double.infinity
     private var lastHandTime = -Double.infinity
     private var lastErrorLogTime = -Double.infinity
+    private var counters = Statistics()
+
+    /// Running totals since `start()`, for the development tools.
+    struct Statistics {
+        var framesReceived = 0
+        var framesAnalysed = 0
+        var faceRuns = 0
+        /// Seconds spent inside Vision.
+        var handSeconds = 0.0
+        var faceSeconds = 0.0
+    }
+
+    var statistics: Statistics { lock.withLock { counters } }
 
     /// - Parameter cameraID: a `CameraDevice.id`, or nil for the default camera.
     init(cameraID: String?) {
@@ -80,6 +93,7 @@ final class VisionLandmarker: LandmarkSource, @unchecked Sendable {
     func start() throws {
         lock.withLock {
             running = true
+            counters = Statistics()
             targetFrameRate = Self.idleFrameRate
             lastProcessedTime = -.infinity
             lastFaceTime = -.infinity
@@ -104,6 +118,7 @@ final class VisionLandmarker: LandmarkSource, @unchecked Sendable {
     /// Capture queue. Decides whether this frame is analysed; never blocks on Vision.
     private func receive(_ pixelBuffer: CVPixelBuffer, time: Double) {
         let wantsFace: Bool? = lock.withLock {
+            counters.framesReceived += 1
             // Dropping while busy keeps latency flat: a queue of frames would only deliver
             // old news later.
             guard running, !busy else { return nil }
@@ -111,6 +126,7 @@ final class VisionLandmarker: LandmarkSource, @unchecked Sendable {
             // so the saving is enforced here as well.
             guard time - lastProcessedTime >= Self.dueTolerance / targetFrameRate else { return nil }
             busy = true
+            counters.framesAnalysed += 1
             lastProcessedTime = time
             let faceDue = faceWanted && time - lastFaceTime >= Self.dueTolerance / Self.faceRate
             if faceDue { lastFaceTime = time }
@@ -131,8 +147,11 @@ final class VisionLandmarker: LandmarkSource, @unchecked Sendable {
         let handler = ImageRequestHandler(pixelBuffer, orientation: .up)
 
         // Hands first and reported straight away: gestures are the latency-sensitive part.
+        let handStart = ProcessInfo.processInfo.systemUptime
         do {
             let observations = try await handler.perform(handRequest)
+            let elapsed = ProcessInfo.processInfo.systemUptime - handStart
+            lock.withLock { counters.handSeconds += elapsed }
             let aspect = imageSize.width / imageSize.height
             let hands = observations.compactMap { Self.hand(from: $0, aspect: aspect) }
             adaptFrameRate(handVisible: !hands.isEmpty, time: time)
@@ -145,8 +164,14 @@ final class VisionLandmarker: LandmarkSource, @unchecked Sendable {
         }
 
         guard wantsFace else { return }
+        let faceStart = ProcessInfo.processInfo.systemUptime
         do {
             let faces = try await handler.perform(faceRequest)
+            let elapsed = ProcessInfo.processInfo.systemUptime - faceStart
+            lock.withLock {
+                counters.faceRuns += 1
+                counters.faceSeconds += elapsed
+            }
             let largest = faces.max { Self.area($0) < Self.area($1) }
             guard let largest, let callback = lock.withLock({ running ? faceCallback : nil }) else { return }
             callback(Self.faceFrame(from: largest, time: time, imageSize: imageSize))

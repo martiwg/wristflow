@@ -76,6 +76,10 @@ enum Recorder {
 
         print("Done: \(stats.frames) frames (\(stats.framesWithHands) with hands, \(stats.handsSeen) hands in total), \(stats.faces) faces.")
         print("Measured rate: \(rate(count: stats.frames, first: stats.firstFrameTime, last: stats.lastFrameTime)) frames/s, \(rate(count: stats.faces, first: stats.firstFaceTime, last: stats.lastFaceTime)) faces/s.")
+        let vision = landmarker.statistics
+        let handMs = vision.framesAnalysed > 0 ? vision.handSeconds / Double(vision.framesAnalysed) * 1000 : 0
+        let faceMs = vision.faceRuns > 0 ? vision.faceSeconds / Double(vision.faceRuns) * 1000 : 0
+        print("Camera delivered \(vision.framesReceived) frames, \(vision.framesAnalysed) analysed. Vision took \(format(handMs)) ms per hand pass and \(format(faceMs)) ms per face pass.")
         print("Saved \(options.url.path)")
         return 0
     }
