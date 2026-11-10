@@ -264,9 +264,28 @@ final class AppModel {
         let binding = config.binding(for: trigger)
         lastTrigger = TriggerReport(trigger: trigger, binding: binding, date: Date())
         flash()
-        if config.showsHUD { HUD.shared.show(trigger: trigger, binding: binding, library: library) }
+        if config.showsHUD { HUD.shared.show(trigger: trigger, text: config.summary(of: binding), library: library) }
         if config.playsSound { NSSound(named: "Tink")?.play() }
-        performer.perform(binding)
+        run(binding)
+    }
+
+    /// Seconds between the steps of one of the user's actions, so the app that gets the first
+    /// key press has acted on it before the next arrives.
+    private static let stepPause = 0.12
+
+    /// Carries out a binding; one of the user's own actions is done step by step.
+    func run(_ binding: ActionBinding) {
+        let steps = config.steps(of: binding)
+        guard steps.count > 1 else {
+            steps.first.map(performer.perform)
+            return
+        }
+        Task {
+            for (index, step) in steps.enumerated() {
+                if index > 0 { try? await Task.sleep(for: .seconds(Self.stepPause)) }
+                performer.perform(step)
+            }
+        }
     }
 
     private func flash() {
@@ -342,7 +361,24 @@ final class AppModel {
 
     /// Runs what a trigger is bound to, as if the gesture had been made (Settings' Test button).
     func perform(_ trigger: Trigger) {
-        performer.perform(config.binding(for: trigger))
+        run(config.binding(for: trigger))
+    }
+
+    // MARK: The user's own actions
+
+    /// Adds one of the user's actions, or changes the one with the same id.
+    func saveAction(_ action: CustomAction) {
+        if let index = config.customActions.firstIndex(where: { $0.id == action.id }) {
+            config.customActions[index] = action
+        } else {
+            config.customActions.append(action)
+        }
+        save()
+    }
+
+    func deleteAction(id: String) {
+        config.removeCustomAction(id)
+        save()
     }
 
     // MARK: The user's own gestures

@@ -183,6 +183,8 @@ public enum ActionKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case open
     /// Runs one of the user's automations by name (Shortcuts on macOS), given in `target`.
     case runShortcut
+    /// One of the actions the user put together, by the id in `target`; see `CustomAction`.
+    case custom
 
     public var id: String { rawValue }
 
@@ -200,6 +202,7 @@ public enum ActionKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .shortcut: "Custom shortcut"
         case .open: "Open an app, file or link"
         case .runShortcut: "Run a Shortcut"
+        case .custom: "My action"
         }
     }
 }
@@ -258,6 +261,24 @@ public struct ActionBinding: Codable, Hashable, Sendable {
     }
 }
 
+/// An action the user put together and named: one or more steps done in order, each a key
+/// combination or any other action. It can then be chosen for any gesture like a built-in one.
+public struct CustomAction: Codable, Hashable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+    /// What it does, in order. A step is never itself a `.custom` action.
+    public var steps: [ActionBinding]
+
+    public init(id: String = UUID().uuidString, name: String, steps: [ActionBinding] = []) {
+        self.id = id
+        self.name = name
+        self.steps = steps
+    }
+
+    /// The binding that runs this action.
+    public var binding: ActionBinding { ActionBinding(kind: .custom, target: id) }
+}
+
 /// Everything the user can configure. Saved as one JSON file; keys missing from an older file
 /// take their defaults.
 public struct AppConfig: Codable, Equatable, Sendable {
@@ -273,8 +294,34 @@ public struct AppConfig: Codable, Equatable, Sendable {
     public var cameraID: String?
     public var showsHUD = true
     public var playsSound = false
+    /// Actions the user put together.
+    public var customActions: [CustomAction] = []
 
     public init() {}
+
+    /// What a binding comes down to: itself, or the steps of the user's action it names.
+    /// Empty when that action is gone or the binding does nothing.
+    public func steps(of binding: ActionBinding) -> [ActionBinding] {
+        switch binding.kind {
+        case .none: []
+        case .custom: customActions.first { $0.id == binding.target }?.steps.filter { $0.kind != .custom && $0.kind != .none } ?? []
+        default: [binding]
+        }
+    }
+
+    /// How to describe a binding in a few words, naming the user's own actions.
+    public func summary(of binding: ActionBinding) -> String {
+        guard binding.kind == .custom else { return binding.summary }
+        return customActions.first { $0.id == binding.target }?.name ?? "Deleted action"
+    }
+
+    /// Removes one of the user's actions; gestures that were set to it go back to doing nothing.
+    public mutating func removeCustomAction(_ id: String) {
+        customActions.removeAll { $0.id == id }
+        for (key, binding) in bindings where binding.kind == .custom && binding.target == id {
+            bindings[key] = ActionBinding.none
+        }
+    }
 
     public static let defaultBindings: [String: ActionBinding] = [
         Trigger.palm.key: ActionBinding(kind: .wisprToggle),
@@ -312,5 +359,6 @@ public struct AppConfig: Codable, Equatable, Sendable {
         cameraID = try values.decodeIfPresent(String.self, forKey: .cameraID)
         showsHUD = try values.decodeIfPresent(Bool.self, forKey: .showsHUD) ?? defaults.showsHUD
         playsSound = try values.decodeIfPresent(Bool.self, forKey: .playsSound) ?? defaults.playsSound
+        customActions = try values.decodeIfPresent([CustomAction].self, forKey: .customActions) ?? []
     }
 }

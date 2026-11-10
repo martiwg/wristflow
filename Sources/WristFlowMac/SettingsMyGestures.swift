@@ -101,7 +101,7 @@ struct MyGesturesTab: View {
 }
 
 /// A name that is saved when the user is done typing, not on every key.
-private struct NameField: View {
+struct NameField: View {
     let name: String
     let onRename: (String) -> Void
     @State private var text = ""
@@ -119,7 +119,7 @@ private struct NameField: View {
             .onChange(of: focused) { _, isFocused in
                 if !isFocused { commit() }
             }
-            .accessibilityLabel("Gesture name")
+            .accessibilityLabel("Name")
     }
 
     private func commit() {

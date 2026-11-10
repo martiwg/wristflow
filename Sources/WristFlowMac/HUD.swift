@@ -33,8 +33,8 @@ final class HUD {
     private var panel: NSPanel?
     private var hiding: Task<Void, Never>?
 
-    func show(trigger: Trigger, binding: ActionBinding, library: GestureLibrary) {
-        let content = NSHostingView(rootView: HUDView(trigger: trigger, library: library, text: binding.summary))
+    func show(trigger: Trigger, text: String, library: GestureLibrary) {
+        let content = NSHostingView(rootView: HUDView(trigger: trigger, library: library, text: text))
         content.frame = CGRect(origin: .zero, size: content.fittingSize)
 
         let panel = panel ?? makePanel()

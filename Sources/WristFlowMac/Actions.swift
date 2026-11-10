@@ -70,7 +70,7 @@ struct MacActionPerformer: @MainActor ActionPerforming {
             FileManager.default.fileExists(atPath: Self.missionControlURL.path)
         case .runShortcut:
             FileManager.default.isExecutableFile(atPath: Self.shortcutsTool)
-        case .none, .spaceLeft, .spaceRight, .previousTab, .nextTab, .pressReturn, .shortcut, .open:
+        case .none, .spaceLeft, .spaceRight, .previousTab, .nextTab, .pressReturn, .shortcut, .open, .custom:
             true
         }
     }
@@ -103,6 +103,9 @@ struct MacActionPerformer: @MainActor ActionPerforming {
             Self.open(binding.target)
         case .runShortcut:
             Self.runShortcut(named: binding.target)
+        case .custom:
+            // The model breaks the user's own actions into their steps before they get here.
+            break
         }
     }
 

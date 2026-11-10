@@ -96,3 +96,26 @@ import Testing
     #expect(restored == library)
     #expect(try JSONDecoder().decode(GestureLibrary.self, from: Data("{}".utf8)) == GestureLibrary())
 }
+
+@Test func theUsersOwnActionsComeDownToTheirSteps() throws {
+    var config = AppConfig()
+    let next = ActionBinding(kind: .shortcut, combo: KeyCombo(keyCode: 48, modifiers: 1 << 18, label: "⌃⇥"))
+    let action = CustomAction(id: "A", name: "Next pane twice", steps: [next, .none, next])
+    config.customActions = [action]
+    config.setBinding(action.binding, for: .fist)
+
+    // Steps that do nothing are left out; an ordinary binding is its own single step.
+    #expect(config.steps(of: config.binding(for: .fist)) == [next, next])
+    #expect(config.steps(of: next) == [next])
+    #expect(config.steps(of: .none).isEmpty)
+    #expect(config.summary(of: action.binding) == "Next pane twice")
+
+    let restored = try JSONDecoder().decode(AppConfig.self, from: JSONEncoder().encode(config))
+    #expect(restored == config)
+
+    // A gesture left pointing at a deleted action does nothing.
+    config.removeCustomAction("A")
+    #expect(config.binding(for: .fist).kind == .none)
+    #expect(config.steps(of: action.binding).isEmpty)
+    #expect(config.summary(of: action.binding) == "Deleted action")
+}

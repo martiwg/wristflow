@@ -64,6 +64,7 @@ size with `FaceFrame.size`, so that has to be the height of a face box like Appl
 | `wisprCancel` | Wispr Flow's dismiss key (Escape by default), only while a microphone is recording |
 | `shortcut` | the recorded `KeyCombo` (key codes are per platform, so shortcuts are recorded again on Windows) |
 | `open` | `ShellExecute` on the binding's `target` (a path or a link) |
+| `custom` | nothing to do: `AppConfig.steps(of:)` breaks the user's own actions into the steps above |
 | `runShortcut` | no direct counterpart; report it as unavailable, or map it to a script the user names |
 
 ## Two ways to use the core

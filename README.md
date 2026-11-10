@@ -33,6 +33,14 @@ out towards the camera; a hand back by your head (biting a nail, chin on the han
 is not read as a pose. Every gesture can be bound to any action in Settings: the built-in
 ones, a shortcut you record, an app, file or link to open, or one of your Shortcuts to run.
 
+### Your own actions
+
+In Settings, under **Actions**, you put together actions of your own: a name and one or more
+steps done in order, each a key combination you record (any key with any mix of Control,
+Option, Shift and Command) or any other action. Once made, an action appears in the list of
+every gesture, recorded gesture and combination. Pressing keys for you needs the
+Accessibility permission.
+
 ### Combinations
 
 A combination is one pose on each hand, held still at the same time: a fist on one hand and

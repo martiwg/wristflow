@@ -27,24 +27,84 @@ struct TriggerRow: View {
     }
 }
 
-/// Chooses what a trigger does: the action, whatever that action needs, and a way to try it.
+/// Chooses what a trigger does, with a way to try it.
 struct ActionEditor: View {
     let model: AppModel
     let trigger: Trigger
-    @State private var testing = false
 
     var body: some View {
         let binding = model.config.binding(for: trigger)
+        HStack {
+            BindingEditor(model: model, binding: binding) { model.setBinding($0, for: trigger) }
+            Spacer(minLength: 4)
+            TestButton(disabled: binding.kind == .none) { model.perform(trigger) }
+        }
+    }
+}
+
+/// Does something two seconds after it is clicked, which is time to switch to the app the
+/// action is meant for.
+struct TestButton: View {
+    let disabled: Bool
+    let action: () -> Void
+    @State private var testing = false
+
+    var body: some View {
+        Button(testing ? "Firing…" : "Test") {
+            testing = true
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                action()
+                testing = false
+            }
+        }
+        .disabled(testing || disabled)
+        .help("Waits two seconds, then does it.")
+    }
+}
+
+/// Chooses an action and whatever that action needs: the keys, the thing to open, the
+/// Shortcut. The user's own actions are listed with the built-in ones unless this is a step
+/// of one of them.
+struct BindingEditor: View {
+    let model: AppModel
+    let binding: ActionBinding
+    var offersCustomActions = true
+    let onChange: (ActionBinding) -> Void
+
+    private static let customPrefix = "custom:"
+
+    /// What the list has selected: a kind by its name, or one of the user's actions by id.
+    private var selection: String {
+        binding.kind == .custom ? Self.customPrefix + (binding.target ?? "") : binding.kind.rawValue
+    }
+
+    private func choose(_ choice: String) {
+        if choice.hasPrefix(Self.customPrefix) {
+            onChange(ActionBinding(kind: .custom, target: String(choice.dropFirst(Self.customPrefix.count))))
+        } else if let kind = ActionKind(rawValue: choice) {
+            onChange(binding.with(kind: kind))
+        }
+    }
+
+    var body: some View {
         // The selected kind stays in the list even when it cannot run here (Wispr Flow not
         // installed), otherwise the picker would show nothing for it.
-        let kinds = ActionKind.allCases.filter { model.isAvailable($0) || $0 == binding.kind }
+        let kinds = ActionKind.allCases.filter { $0 != .custom && (model.isAvailable($0) || $0 == binding.kind) }
+        let actions = offersCustomActions ? model.config.customActions : []
         HStack {
-            Picker("Action", selection: Binding(
-                get: { binding.kind },
-                set: { model.setBinding(binding.with(kind: $0), for: trigger) }
-            )) {
+            Picker("Action", selection: Binding(get: { selection }, set: choose)) {
                 ForEach(kinds) { kind in
-                    Text(kind.title).tag(kind)
+                    Text(kind.title).tag(kind.rawValue)
+                }
+                if !actions.isEmpty {
+                    Divider()
+                    ForEach(actions) { action in
+                        Text(action.name).tag(Self.customPrefix + action.id)
+                    }
+                }
+                if binding.kind == .custom, !actions.contains(where: { $0.id == binding.target }) {
+                    Text("Deleted action").tag(selection)
                 }
             }
             .labelsHidden()
@@ -52,33 +112,18 @@ struct ActionEditor: View {
 
             switch binding.kind {
             case .shortcut:
-                ShortcutRecorder(combo: binding.combo) { combo in
-                    model.setBinding(ActionBinding(kind: .shortcut, combo: combo), for: trigger)
-                }
+                ShortcutRecorder(combo: binding.combo) { onChange(ActionBinding(kind: .shortcut, combo: $0)) }
             case .open:
-                OpenTargetButton(target: binding.target) { target in
-                    model.setBinding(ActionBinding(kind: .open, combo: binding.combo, target: target), for: trigger)
+                OpenTargetButton(target: binding.target) {
+                    onChange(ActionBinding(kind: .open, combo: binding.combo, target: $0))
                 }
             case .runShortcut:
-                ShortcutNamePicker(name: binding.target) { name in
-                    model.setBinding(ActionBinding(kind: .runShortcut, combo: binding.combo, target: name), for: trigger)
+                ShortcutNamePicker(name: binding.target) {
+                    onChange(ActionBinding(kind: .runShortcut, combo: binding.combo, target: $0))
                 }
             default:
                 EmptyView()
             }
-
-            Spacer(minLength: 4)
-            Button(testing ? "Firing…" : "Test") {
-                testing = true
-                Task {
-                    // Time to switch to the app the action is meant for.
-                    try? await Task.sleep(for: .seconds(2))
-                    model.perform(trigger)
-                    testing = false
-                }
-            }
-            .disabled(testing || binding.kind == .none)
-            .help("Waits two seconds, then does what this gesture does.")
         }
     }
 }
@@ -131,6 +176,10 @@ struct ShortcutRecorder: View {
     }
 
     private static func keyName(_ event: NSEvent) -> String {
+        // Read from the key, not the character: with Shift held, the character of the 1 key
+        // is "!", and with Control it may be none at all.
+        let digits = [kVK_ANSI_0, kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5, kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9]
+        if let digit = digits.firstIndex(of: Int(event.keyCode)) { return String(digit) }
         let named: [Int: String] = [
             kVK_LeftArrow: "←", kVK_RightArrow: "→", kVK_UpArrow: "↑", kVK_DownArrow: "↓",
             kVK_Space: "Space", kVK_Tab: "⇥", kVK_Return: "↩", kVK_Delete: "⌫",

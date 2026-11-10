@@ -328,7 +328,7 @@ private struct ReadingPanel: View {
                 Text("Last gesture:")
                     .foregroundStyle(.secondary)
                 Text("\(report.trigger.glyph) \(model.title(for: report.trigger))")
-                Text(report.binding.summary)
+                Text(model.config.summary(of: report.binding))
                     .foregroundStyle(.secondary)
             }
         } else {
